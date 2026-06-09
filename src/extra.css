@@ -1,0 +1,84 @@
+/* extra.css — only NEW component classes specific to the WebAuthn demo.
+   Reuses CSS variables from style.css. No hardcoded colors. */
+
+/* ---------- Verify result block ---------- */
+.verify-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.verify-summary {
+  font-size: 14px;
+  color: var(--ink-strong);
+}
+.verify-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--metric-bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+/* ---------- Per-check rows ---------- */
+.check-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.check-row {
+  display: grid;
+  grid-template-columns: 70px 160px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.check-row--pass {
+  border-color: color-mix(in srgb, var(--pass-ink) 30%, var(--line));
+}
+.check-row--fail {
+  border-color: color-mix(in srgb, var(--fail-ink) 30%, var(--line));
+}
+.check-label {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-strong);
+}
+.check-detail {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .check-row {
+    grid-template-columns: 70px 1fr;
+  }
+  .check-row .check-detail {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------- Attack control buttons ---------- */
+.attack-controls .attack-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ---------- Card titles inside reuse-grid ---------- */
+.card-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--accent);
+  letter-spacing: 0;
+}

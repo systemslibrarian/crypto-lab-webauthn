@@ -33,7 +33,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
   for (const [k, v] of Object.entries(rest)) {
     if (v === undefined || v === false) continue;
     if (k === 'class') node.className = String(v);
-    else if (k.startsWith('data-') || k === 'role' || k === 'aria-label' || k === 'aria-live') {
+    else if (
+      k.startsWith('data-') ||
+      k.startsWith('aria-') ||
+      k === 'role' ||
+      k === 'tabindex'
+    ) {
       node.setAttribute(k, String(v));
     } else if (k === 'id') node.id = String(v);
     else node.setAttribute(k, String(v));
@@ -56,8 +61,19 @@ interface DemoState {
   auth: Authenticator;
   rp: RelyingParty;
   credential: StoredCredential | null;
-  lastAssertion: Assertion | null;
-  lastChallenge: string | null;
+  signCountChip: HTMLElement | null;
+}
+
+function updateSignCountChip(state: DemoState): void {
+  const chip = state.signCountChip;
+  if (!chip || !state.credential) return;
+  const current = state.auth.peekCount(state.credential.credentialId);
+  const strong = chip.querySelector('strong');
+  if (strong) strong.textContent = String(current);
+  chip.classList.remove('bumped');
+  // Re-trigger the animation.
+  void chip.offsetWidth;
+  chip.classList.add('bumped');
 }
 
 export function mountApp(root: HTMLDivElement): void {
@@ -65,33 +81,33 @@ export function mountApp(root: HTMLDivElement): void {
     auth: new Authenticator(),
     rp: new RelyingParty(),
     credential: null,
-    lastAssertion: null,
-    lastChallenge: null,
+    signCountChip: null,
   };
 
-  root.append(
-    renderHero(),
+  const hero = renderHero(state);
+  const main = el('main', { id: 'main-content', role: 'main', tabindex: '-1' });
+  main.append(
     renderRegister(state),
     renderLogin(state),
     renderBreakIt(state),
     renderPhishingExplainer(),
-    renderComparison(),
+    renderCeremonyTable(),
     renderRealWorld(),
-    renderFooter(),
   );
+  root.append(hero, main, renderFooter());
 }
 
 // =====================================================================
 // Hero
 // =====================================================================
-function renderHero(): HTMLElement {
-  const section = el('section', { class: 'hero-panel' });
+function renderHero(state: DemoState): HTMLElement {
+  const section = el('header', { class: 'hero-panel', role: 'banner' });
 
   const toggle = el('button', {
     class: 'theme-toggle',
     id: 'theme-toggle',
     type: 'button',
-    'aria-label': 'Toggle dark and light theme',
+    'aria-label': 'Switch to light theme',
     text: '🌙',
   });
   section.append(toggle);
@@ -116,12 +132,28 @@ function renderHero(): HTMLElement {
   );
   section.append(details);
 
-  section.append(
+  const metricRow = el('div', { class: 'hero-metric-row' });
+  metricRow.append(
     el('div', {
       class: 'hero-metric',
       text: 'Real ECDSA P-256 · private key never leaves the authenticator · phishing-resistant',
     }),
   );
+
+  const chip = el('div', {
+    class: 'sign-count-chip',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Authenticator signature counter',
+  });
+  chip.append(
+    document.createTextNode('Authenticator signCount: '),
+    el('strong', { text: '0' }),
+  );
+  state.signCountChip = chip;
+  metricRow.append(chip);
+  section.append(metricRow);
 
   return section;
 }
@@ -130,11 +162,11 @@ function renderHero(): HTMLElement {
 // Phase 2 — Register a passkey
 // =====================================================================
 function renderRegister(state: DemoState): HTMLElement {
-  const section = el('section', { class: 'lab-section', id: 'register' });
+  const section = el('section', { class: 'lab-section', id: 'register', 'aria-labelledby': 'register-h' });
 
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'Register a passkey' }),
+      el('h2', { id: 'register-h', text: 'Register a passkey' }),
       el('span', { class: 'section-kicker', text: 'Ceremony · step 1' }),
     ]),
     el('p', {
@@ -143,25 +175,33 @@ function renderRegister(state: DemoState): HTMLElement {
     }),
   );
 
-  const out = el('div', { class: 'panel-card', id: 'register-out' });
+  const out = el('div', {
+    class: 'panel-card',
+    id: 'register-out',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Registered credential output',
+  });
   out.append(el('p', { class: 'mono', text: 'No credential yet. Click "Create passkey".' }));
 
   const button = el('button', { type: 'button', text: 'Create passkey' });
   button.addEventListener('click', () => {
     void (async () => {
       button.disabled = true;
+      out.setAttribute('aria-busy', 'true');
       try {
         const cred = await state.auth.makeCredential(RP_ID);
         state.rp.register(cred);
         state.credential = cred;
-        state.lastAssertion = null;
-        state.lastChallenge = null;
         renderCredential(out, cred);
+        updateSignCountChip(state);
       } catch (err) {
         out.replaceChildren(
           el('p', { class: 'mono', text: `Error: ${(err as Error).message}` }),
         );
       } finally {
+        out.removeAttribute('aria-busy');
         button.disabled = false;
       }
     })();
@@ -186,7 +226,9 @@ function renderCredential(container: HTMLElement, cred: StoredCredential): void 
   const y = cred.publicKeyJwk.y ? shortB64(cred.publicKeyJwk.y, 22) : '?';
 
   const table = el('table', { class: 'math-table' });
+  const caption = el('caption', { class: 'visually-hidden', text: 'Stored credential fields registered with the relying party' });
   table.append(
+    caption,
     rowTH('Stored credential', 'value (truncated)'),
     row('Credential ID', shortB64(cred.credentialId, 22)),
     row('RP ID', cred.rpId),
@@ -196,7 +238,7 @@ function renderCredential(container: HTMLElement, cred: StoredCredential): void 
     row('signCount', String(cred.signCount)),
   );
   container.append(
-    table,
+    el('div', { class: 'table-wrap' }, [table]),
     el('p', {
       class: 'mono',
       text: 'The server stores all of this. It has no copy of the private key — there is no secret on the server to steal.',
@@ -206,12 +248,12 @@ function renderCredential(container: HTMLElement, cred: StoredCredential): void 
 
 function rowTH(a: string, b: string): HTMLTableRowElement {
   const r = el('tr');
-  r.append(el('th', { text: a }), el('th', { text: b }));
+  r.append(el('th', { scope: 'col', text: a }), el('th', { scope: 'col', text: b }));
   return r;
 }
 function row(a: string, b: string): HTMLTableRowElement {
   const r = el('tr');
-  r.append(el('td', { text: a }), el('td', { class: 'mono', text: b }));
+  r.append(el('th', { scope: 'row', text: a }), el('td', { class: 'mono', text: b }));
   return r;
 }
 
@@ -219,10 +261,10 @@ function row(a: string, b: string): HTMLTableRowElement {
 // Phase 3 — Authenticate
 // =====================================================================
 function renderLogin(state: DemoState): HTMLElement {
-  const section = el('section', { class: 'lab-section', id: 'login' });
+  const section = el('section', { class: 'lab-section', id: 'login', 'aria-labelledby': 'login-h' });
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'Log in' }),
+      el('h2', { id: 'login-h', text: 'Log in' }),
       el('span', { class: 'section-kicker', text: 'Ceremony · step 2' }),
     ]),
     el('p', {
@@ -231,7 +273,14 @@ function renderLogin(state: DemoState): HTMLElement {
     }),
   );
 
-  const out = el('div', { class: 'panel-card', id: 'login-out' });
+  const out = el('div', {
+    class: 'panel-card',
+    id: 'login-out',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Login verification result',
+  });
   out.append(el('p', { class: 'mono', text: 'No login yet. Register first, then click "Authenticate".' }));
 
   const button = el('button', { type: 'button', text: 'Authenticate' });
@@ -242,6 +291,7 @@ function renderLogin(state: DemoState): HTMLElement {
         return;
       }
       button.disabled = true;
+      out.setAttribute('aria-busy', 'true');
       try {
         const challenge = randomChallenge();
         const assertionOrErr = await state.auth.getAssertion(
@@ -259,12 +309,12 @@ function renderLogin(state: DemoState): HTMLElement {
           expectedOrigin: ORIGIN_REAL,
           expectedRpId: RP_ID,
         });
-        state.lastAssertion = assertionOrErr;
-        state.lastChallenge = challenge;
         renderVerifyResult(out, result, { challenge, origin: ORIGIN_REAL, rpId: RP_ID });
+        updateSignCountChip(state);
       } catch (err) {
         renderChecksError(out, `Unexpected error: ${(err as Error).message}`);
       } finally {
+        out.removeAttribute('aria-busy');
         button.disabled = false;
       }
     })();
@@ -304,16 +354,22 @@ function renderVerifyResult(container: HTMLElement, result: VerifyResult, meta: 
 
   const ctxBlock = el('table', { class: 'math-table' });
   ctxBlock.append(
+    el('caption', { class: 'visually-hidden', text: 'Verifier context the server compared against the assertion' }),
     rowTH('Verifier context', 'value'),
     row('expectedChallenge', shortB64(meta.challenge, 22)),
     row('expectedOrigin', meta.origin),
     row('expectedRpId', meta.rpId),
   );
-  container.append(ctxBlock);
+  container.append(el('div', { class: 'table-wrap' }, [ctxBlock]));
 
-  const list = el('ul', { class: 'check-list' });
+  const list = el('ul', { class: 'check-list', 'aria-label': 'Per-check verification rows' });
+  let spotlighted = false;
   for (const c of result.checks) {
-    const li = el('li', { class: `check-row ${c.pass ? 'check-row--pass' : 'check-row--fail'}` });
+    const isFirstFail = !c.pass && !spotlighted;
+    if (isFirstFail) spotlighted = true;
+    const li = el('li', {
+      class: `check-row ${c.pass ? 'check-row--pass' : 'check-row--fail'}${isFirstFail ? ' check-row--fail-spotlight' : ''}`,
+    });
     li.append(
       el('span', {
         class: `scenario-status ${c.pass ? 'scenario-status--valid' : 'scenario-status--invalid'}`,
@@ -343,11 +399,20 @@ function renderChecksError(container: HTMLElement, message: string): void {
 // =====================================================================
 // Phase 4 — Break it
 // =====================================================================
+function attackButton(label: string, emoji: string): HTMLButtonElement {
+  const btn = el('button', { type: 'button', class: 'secondary' });
+  btn.append(
+    el('span', { class: 'emoji', 'aria-hidden': 'true', text: emoji }),
+    document.createTextNode(label),
+  );
+  return btn;
+}
+
 function renderBreakIt(state: DemoState): HTMLElement {
-  const section = el('section', { class: 'lab-section', id: 'break-it' });
+  const section = el('section', { class: 'lab-section', id: 'break-it', 'aria-labelledby': 'break-h' });
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'Break it (and watch each attack fail)' }),
+      el('h2', { id: 'break-h', text: 'Break it (and watch each attack fail)' }),
       el('span', { class: 'section-kicker', text: 'The payoff' }),
     ]),
     el('p', {
@@ -356,14 +421,21 @@ function renderBreakIt(state: DemoState): HTMLElement {
     }),
   );
 
-  const out = el('div', { class: 'panel-card', id: 'attack-out' });
+  const out = el('div', {
+    class: 'panel-card',
+    id: 'attack-out',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Attack scenario result',
+  });
   out.append(el('p', { class: 'mono', text: 'No attack run yet. Pick one of the controls.' }));
 
-  const phishBtn = el('button', { type: 'button', class: 'secondary', text: '👻 Phishing site' });
-  const replayBtn = el('button', { type: 'button', class: 'secondary', text: '🔁 Replay assertion' });
-  const wrongRpBtn = el('button', { type: 'button', class: 'secondary', text: '🪤 Wrong relying party' });
-  const cloneBtn = el('button', { type: 'button', class: 'secondary', text: '👯 Cloned authenticator' });
-  const baselineBtn = el('button', { type: 'button', class: 'secondary', text: '↺ Reset baseline' });
+  const phishBtn = attackButton('Phishing site', '👻');
+  const replayBtn = attackButton('Replay assertion', '🔁');
+  const wrongRpBtn = attackButton('Wrong relying party', '🪤');
+  const cloneBtn = attackButton('Cloned authenticator', '👯');
+  const baselineBtn = attackButton('Reset baseline', '↺');
 
   phishBtn.addEventListener('click', () => void runPhishing(state, out, phishBtn));
   replayBtn.addEventListener('click', () => void runReplay(state, out, replayBtn));
@@ -375,7 +447,9 @@ function renderBreakIt(state: DemoState): HTMLElement {
     el('div', { class: 'playground-grid' }, [
       el('div', { class: 'panel-card attack-controls' }, [
         el('p', { text: 'Run an attack against the registered credential. Each restores cleanly so you can try the next.' }),
-        el('div', { class: 'attack-button-row' }, [phishBtn, replayBtn, wrongRpBtn, cloneBtn]),
+        el('div', { class: 'attack-button-row', role: 'group', 'aria-label': 'Attack scenarios' }, [
+          phishBtn, replayBtn, wrongRpBtn, cloneBtn,
+        ]),
         el('div', { class: 'attack-button-row' }, [baselineBtn]),
       ]),
       out,
@@ -385,16 +459,27 @@ function renderBreakIt(state: DemoState): HTMLElement {
   return section;
 }
 
+async function withBusy(out: HTMLElement, btn: HTMLButtonElement, fn: () => Promise<void>): Promise<void> {
+  btn.disabled = true;
+  out.setAttribute('aria-busy', 'true');
+  try {
+    await fn();
+  } finally {
+    out.removeAttribute('aria-busy');
+    btn.disabled = false;
+  }
+}
+
 async function runPhishing(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
   if (!state.credential) {
     renderChecksError(out, 'Register a passkey first.');
     return;
   }
-  btn.disabled = true;
-  try {
+  await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
+    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      state.credential.credentialId,
+      cred.credentialId,
       challenge,
       ORIGIN_PHISH,
       RP_ID,
@@ -414,9 +499,8 @@ async function runPhishing(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
       rpId: RP_ID,
       note: `Authenticator signed origin ${ORIGIN_PHISH}; verifier expected ${ORIGIN_REAL}. The look-alike domain cannot produce a usable assertion because the real origin is baked into what gets signed.`,
     });
-  } finally {
-    btn.disabled = false;
-  }
+    updateSignCountChip(state);
+  });
 }
 
 async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
@@ -424,11 +508,11 @@ async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
     renderChecksError(out, 'Register a passkey first.');
     return;
   }
-  btn.disabled = true;
-  try {
+  await withBusy(out, btn, async () => {
     const challenge1 = randomChallenge();
+    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      state.credential.credentialId,
+      cred.credentialId,
       challenge1,
       ORIGIN_REAL,
       RP_ID,
@@ -437,7 +521,6 @@ async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    // First verify passes — capture the assertion.
     const first = await state.rp.verifyAssertion(assertionOrErr, {
       expectedChallenge: challenge1,
       expectedOrigin: ORIGIN_REAL,
@@ -447,7 +530,6 @@ async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
       renderVerifyResult(out, first, { challenge: challenge1, origin: ORIGIN_REAL, rpId: RP_ID });
       return;
     }
-    // Now replay against a NEW challenge.
     const challenge2 = randomChallenge();
     const replayed = await state.rp.verifyAssertion(assertionOrErr, {
       expectedChallenge: challenge2,
@@ -460,9 +542,8 @@ async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
       rpId: RP_ID,
       note: 'A valid assertion was captured and replayed against a fresh challenge. The signed challenge does not match the new one — replay blocked.',
     });
-  } finally {
-    btn.disabled = false;
-  }
+    updateSignCountChip(state);
+  });
 }
 
 async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
@@ -470,11 +551,11 @@ async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonEle
     renderChecksError(out, 'Register a passkey first.');
     return;
   }
-  btn.disabled = true;
-  try {
+  await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
+    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      state.credential.credentialId,
+      cred.credentialId,
       challenge,
       `https://${RP_ID_EVIL}`,
       RP_ID_EVIL,
@@ -492,16 +573,13 @@ async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonEle
       );
       return;
     }
-    // (Should not get here — kept for type-safety.)
     const result = await state.rp.verifyAssertion(assertionOrErr, {
       expectedChallenge: challenge,
       expectedOrigin: ORIGIN_REAL,
       expectedRpId: RP_ID,
     });
     renderVerifyResult(out, result, { challenge, origin: ORIGIN_REAL, rpId: RP_ID });
-  } finally {
-    btn.disabled = false;
-  }
+  });
 }
 
 async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
@@ -509,11 +587,11 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
     renderChecksError(out, 'Register a passkey first.');
     return;
   }
-  btn.disabled = true;
-  try {
+  await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
+    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      state.credential.credentialId,
+      cred.credentialId,
       challenge,
       ORIGIN_REAL,
       RP_ID,
@@ -522,8 +600,7 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    // Simulate a clone: same private key reused, but the clone's local counter
-    // has not advanced as far. Force signCount <= last seen.
+    // Simulate a clone: counter has not advanced as far as the real authenticator.
     const cloned: Assertion = { ...assertionOrErr, signCount: 0 };
     const result = await state.rp.verifyAssertion(cloned, {
       expectedChallenge: challenge,
@@ -536,9 +613,8 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
       rpId: RP_ID,
       note: 'A clone of the authenticator would lag behind on the monotonic counter. The server sees signCount go backwards and flags it — clone detection.',
     });
-  } finally {
-    btn.disabled = false;
-  }
+    updateSignCountChip(state);
+  });
 }
 
 async function runBaseline(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
@@ -546,11 +622,11 @@ async function runBaseline(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
     renderChecksError(out, 'Register a passkey first.');
     return;
   }
-  btn.disabled = true;
-  try {
+  await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
+    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      state.credential.credentialId,
+      cred.credentialId,
       challenge,
       ORIGIN_REAL,
       RP_ID,
@@ -570,19 +646,18 @@ async function runBaseline(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
       rpId: RP_ID,
       note: 'Baseline restored: a clean authentication against the real relying party with a fresh challenge.',
     });
-  } finally {
-    btn.disabled = false;
-  }
+    updateSignCountChip(state);
+  });
 }
 
 // =====================================================================
-// Phase 5 — Why phishing fails / comparison
+// Why phishing fails / comparison
 // =====================================================================
 function renderPhishingExplainer(): HTMLElement {
-  const section = el('section', { class: 'lab-section' });
+  const section = el('section', { class: 'lab-section', 'aria-labelledby': 'why-h' });
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'Why phishing fails' }),
+      el('h2', { id: 'why-h', text: 'Why phishing fails' }),
       el('span', { class: 'section-kicker', text: 'The security property' }),
     ]),
     el('p', {
@@ -604,50 +679,56 @@ function renderPhishingExplainer(): HTMLElement {
 
   section.append(
     el('div', { class: 'section-heading-row', style: 'margin-top:28px' }, [
-      el('h2', { text: 'Passwords vs passkeys' }),
+      el('h2', { id: 'compare-h', text: 'Passwords vs passkeys' }),
       el('span', { class: 'section-kicker', text: 'At a glance' }),
     ]),
   );
-  const table = el('table', { class: 'math-table' });
+  const table = el('table', { class: 'math-table', 'aria-labelledby': 'compare-h' });
+  table.append(
+    el('caption', { class: 'visually-hidden', text: 'Comparison of password and passkey properties' }),
+  );
   const head = el('tr');
   head.append(
-    el('th', { text: 'Property' }),
-    el('th', { text: 'Password' }),
-    el('th', { text: 'Passkey' }),
+    el('th', { scope: 'col', text: 'Property' }),
+    el('th', { scope: 'col', text: 'Password' }),
+    el('th', { scope: 'col', text: 'Passkey' }),
   );
   table.append(head);
   for (const r of PASSWORD_VS_PASSKEY) {
     const tr = el('tr');
     tr.append(
-      el('td', { text: r.property }),
+      el('th', { scope: 'row', text: r.property }),
       el('td', { text: r.password }),
       el('td', { text: r.passkey }),
     );
     table.append(tr);
   }
-  section.append(table);
+  section.append(el('div', { class: 'table-wrap' }, [table]));
 
   return section;
 }
 
-function renderComparison(): HTMLElement {
-  const section = el('section', { class: 'lab-section' });
+function renderCeremonyTable(): HTMLElement {
+  const section = el('section', { class: 'lab-section', 'aria-labelledby': 'ceremony-h' });
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'The ceremony at a glance' }),
+      el('h2', { id: 'ceremony-h', text: 'The ceremony at a glance' }),
       el('span', { class: 'section-kicker', text: 'Step by step' }),
     ]),
     el('p', {
       text: 'Every step that touches a secret happens inside the authenticator. The server only ever sees public material.',
     }),
   );
-  const table = el('table', { class: 'math-table' });
+  const table = el('table', { class: 'math-table', 'aria-labelledby': 'ceremony-h' });
+  table.append(
+    el('caption', { class: 'visually-hidden', text: 'Six-step registration and authentication ceremony' }),
+  );
   const head = el('tr');
   head.append(
-    el('th', { text: 'Phase' }),
-    el('th', { text: '#' }),
-    el('th', { text: 'Actor' }),
-    el('th', { text: 'What happens' }),
+    el('th', { scope: 'col', text: 'Phase' }),
+    el('th', { scope: 'col', text: '#' }),
+    el('th', { scope: 'col', text: 'Actor' }),
+    el('th', { scope: 'col', text: 'What happens' }),
   );
   table.append(head);
   for (const s of CEREMONY_STEPS) {
@@ -660,18 +741,18 @@ function renderComparison(): HTMLElement {
     );
     table.append(tr);
   }
-  section.append(table);
+  section.append(el('div', { class: 'table-wrap' }, [table]));
   return section;
 }
 
 // =====================================================================
-// Phase 6 — In the real world
+// In the real world
 // =====================================================================
 function renderRealWorld(): HTMLElement {
-  const section = el('section', { class: 'lab-section' });
+  const section = el('section', { class: 'lab-section', 'aria-labelledby': 'real-h' });
   section.append(
     el('div', { class: 'section-heading-row' }, [
-      el('h2', { text: 'In the real world' }),
+      el('h2', { id: 'real-h', text: 'In the real world' }),
       el('span', { class: 'section-kicker', text: 'Beyond the toy model' }),
     ]),
     el('p', {
@@ -696,7 +777,7 @@ function renderRealWorld(): HTMLElement {
 // Footer — scripture (Part D)
 // =====================================================================
 function renderFooter(): HTMLElement {
-  const footer = el('footer', { class: 'scripture-footer' });
+  const footer = el('footer', { class: 'scripture-footer', role: 'contentinfo' });
   footer.append(
     el('p', { text: SCRIPTURE_TEXT }),
     el('cite', { text: `— ${SCRIPTURE_CITATION}` }),

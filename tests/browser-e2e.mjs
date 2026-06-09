@@ -289,6 +289,117 @@ async function main() {
     // ---- axe scan: mobile viewport ----
     await runAxe(page, 'mobile viewport');
 
+    // ---- Path A: production-gaps section ----
+    const gapCardCount = await page.$$eval('#production-gaps .gap-card', (els) => els.length);
+    assert('production-gaps shows 6 cards', gapCardCount === 6, `got ${gapCardCount}`);
+
+    // ---- Path B: discoverable + UV section ----
+    // Reset viewport so the buttons are clickable (we shrank to 375 earlier).
+    await page.setViewport({ width: 1100, height: 1000 });
+    await wait(150);
+    // After the reload, state was reset. Re-register so the discoverable
+    // section has a credential to work with.
+    await page.click('#register button');
+    await page.waitForFunction(() => document.querySelector('#register-out table'), { timeout: 5000 });
+    async function clickDiscoverable(labelRegex) {
+      const handle = await page.evaluateHandle(
+        (re) => {
+          const buttons = Array.from(document.querySelectorAll('#discoverable button'));
+          return buttons.find((b) => new RegExp(re, 'i').test(b.textContent || '')) || null;
+        },
+        labelRegex.source,
+      );
+      const elHandle = handle.asElement();
+      if (!elHandle) throw new Error(`no discoverable button for ${labelRegex}`);
+      await elHandle.click();
+      await waitIdle(page);
+    }
+
+    await clickDiscoverable(/Discoverable login/);
+    const discChecks = await page.$$eval('#discoverable-out .check-row', (els) => els.length);
+    assert('discoverable login yields 7 check rows (incl. UP+UV)', discChecks === 7, `got ${discChecks}`);
+    const discAllPass = await page.$$eval(
+      '#discoverable-out .check-row--pass',
+      (els) => els.length,
+    );
+    assert('discoverable login: all 7 rows pass', discAllPass === 7, `passes=${discAllPass}`);
+
+    await clickDiscoverable(/RP demands UV/);
+    const uvFailLabel = await page.$eval(
+      '#discoverable-out .check-row--fail-spotlight .check-label',
+      (n) => n.textContent ?? '',
+    );
+    assert('UV-required + UV-not-performed trips UV check', /User verified/.test(uvFailLabel));
+
+    await clickDiscoverable(/RP demands UP/);
+    const upFailLabel = await page.$eval(
+      '#discoverable-out .check-row--fail-spotlight .check-label',
+      (n) => n.textContent ?? '',
+    );
+    assert('UP-required + UP-not-performed trips UP check', /User present/.test(upFailLabel));
+
+    // ---- Path C: live demo with virtual authenticator ----
+    const client = await page.createCDPSession();
+    await client.send('WebAuthn.enable', { enableUI: false });
+    const virtAuth = await client.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport: 'internal',
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    });
+    assert('virtual authenticator created', !!virtAuth.authenticatorId);
+
+    // Make sure the live-demo host actually rendered.
+    const liveSupported = await page.$eval('#live-demo-host .live-status', (n) => n.textContent ?? '');
+    assert('live demo reports WebAuthn supported', /supported/i.test(liveSupported));
+
+    // Click "Register a real passkey" and wait for the panel to render the AAGUID line.
+    const liveRegisterBtn = await page.evaluateHandle(() => {
+      const btns = Array.from(document.querySelectorAll('#live-demo-host button'));
+      return btns.find((b) => /Register a real passkey/i.test(b.textContent || '')) || null;
+    });
+    const liveRegEl = liveRegisterBtn.asElement();
+    if (!liveRegEl) throw new Error('live register button not found');
+    await liveRegEl.click();
+    await page.waitForFunction(
+      () => {
+        const out = document.querySelector('#live-out');
+        return out && /AAGUID/i.test(out.textContent || '');
+      },
+      { timeout: 8000 },
+    );
+    const liveRegText = await page.$eval('#live-out', (n) => n.textContent ?? '');
+    assert('live register shows credentialId', /credentialId/.test(liveRegText));
+    assert('live register shows AAGUID', /AAGUID/.test(liveRegText));
+    assert('live register shows public key JWK', /EC \/ P-256/.test(liveRegText));
+    assert('live register shows UP flag set', /UP: 1/.test(liveRegText));
+
+    // Click "Authenticate" and verify locally-verified=true.
+    const liveAuthBtn = await page.evaluateHandle(() => {
+      const btns = Array.from(document.querySelectorAll('#live-demo-host button'));
+      return btns.find((b) => /Authenticate with the real passkey/i.test(b.textContent || '')) || null;
+    });
+    const liveAuthEl = liveAuthBtn.asElement();
+    if (!liveAuthEl) throw new Error('live authenticate button not found');
+    await liveAuthEl.click();
+    await page.waitForFunction(
+      () => {
+        const out = document.querySelector('#live-out');
+        return out && /(Verified|Signature failed)/i.test(out.textContent || '');
+      },
+      { timeout: 8000 },
+    );
+    const liveAuthText = await page.$eval('#live-out', (n) => n.textContent ?? '');
+    assert('live authenticate verifies signature locally', /Verified/i.test(liveAuthText) && !/Signature failed/.test(liveAuthText));
+    assert('live authenticate shows DER + raw signature', /DER, base64/.test(liveAuthText) && /raw r/.test(liveAuthText));
+    assert('live authenticate shows BE\/BS flags', /BE:/.test(liveAuthText) && /BS:/.test(liveAuthText));
+
+    await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: virtAuth.authenticatorId });
+
     // ---- No console errors ----
     assert('no unexpected console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
   } finally {

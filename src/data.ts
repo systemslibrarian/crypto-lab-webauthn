@@ -129,6 +129,76 @@ export const REAL_WORLD: RealWorldNote[] = [
   },
 ];
 
+// =====================================================================
+// Production WebAuthn features this teaching demo does NOT (and should not)
+// pretend to implement. Honest boundary — keeps the learner from confusing
+// "I understand the signature seals the origin" with "I have implemented a
+// production WebAuthn relying party".
+// =====================================================================
+export interface ProductionGap {
+  title: string;
+  what: string;
+  why: string;
+  doRealLibraries: string;
+}
+
+export const PRODUCTION_GAPS: ProductionGap[] = [
+  {
+    title: 'Discoverable credentials (resident keys) and BE/BS flags',
+    what:
+      'Production WebAuthn supports username-less login. The authenticator looks up its credentials for the RP without the server naming them, and reports two flags in authData — Backup Eligibility and Backup State — that tell the RP whether the credential is a syncable passkey (iCloud Keychain, Google Password Manager) or a single-device key.',
+    why:
+      'The simulator below adds a discoverable-credential lookup (Path B), but BE/BS flags require the real WebAuthn authData binary format, not the JSON shorthand this page uses.',
+    doRealLibraries:
+      'SimpleWebAuthn, py_webauthn, webauthn4j all decode BE/BS for you.',
+  },
+  {
+    title: 'Conditional UI / autofill (navigator.credentials.get mediation)',
+    what:
+      'Modern browsers can surface passkeys directly inside the username field of a normal login form using mediation: \'conditional\'. No "Sign in with passkey" button needed.',
+    why:
+      'This is a browser API behavior — it cannot be simulated from JavaScript pretending to be an authenticator. The live-demo section at the bottom of the page uses the real API.',
+    doRealLibraries:
+      'A single PublicKeyCredentialRequestOptions object with mediation: \'conditional\' on the get() call.',
+  },
+  {
+    title: 'CBOR / COSE encoding and hardware attestation',
+    what:
+      'Real authData is a packed byte structure; the public key inside it is COSE-encoded, not JWK. Registration optionally includes an attestation statement (formats: packed, fido-u2f, tpm, android-key, apple, none) that proves the model of the authenticator.',
+    why:
+      'This page deliberately uses JSON for the security-relevant fields so a learner can read them. Switching to CBOR/COSE/attestation would obscure the lesson without changing the security property — that is the original prompt\'s explicit scope boundary.',
+    doRealLibraries:
+      'cbor-x for CBOR; fido-mds3 / fido-conformance-tools for attestation root trust.',
+  },
+  {
+    title: 'AAGUID and authenticator model identification',
+    what:
+      'Each authenticator family ships with a 128-bit Authenticator Attestation GUID — for example, distinguishing a YubiKey 5 NFC from Windows Hello. RPs that enforce hardware policies (e.g., FIDO-certified only) gate on AAGUID.',
+    why:
+      'AAGUID lives inside the attestation statement, which lives inside the CBOR-encoded attestationObject. Requires the same parsing this simulator skips.',
+    doRealLibraries:
+      'The FIDO Metadata Service (MDS3) maps AAGUIDs → vendor / model / certification level.',
+  },
+  {
+    title: 'User Presence (UP) and User Verification (UV) flags',
+    what:
+      'The authData flags byte records whether the user actually touched the authenticator (UP) and whether biometric or PIN verification happened (UV). RPs that want multi-factor must require UV — without it, a credential alone is just possession.',
+    why:
+      'The simulator below now models these (Path B): you can toggle "Require user verification" and watch the verifier reject an assertion that lacks UV. The real flags byte also carries AT and ED bits this model omits.',
+    doRealLibraries:
+      'Every server library checks UP/UV. Production policy is almost always require: UV.',
+  },
+  {
+    title: 'Hybrid transport (caBLE) — cross-device passkey login',
+    what:
+      'A user on a desktop without a local passkey can present a QR code, scan it with their phone, and complete authentication over an authenticated Bluetooth/internet channel. This is how "Sign in on this Mac using my iPhone" works.',
+    why:
+      'caBLE is implemented by the operating system and browser — there is nothing for a relying party to do beyond requesting any allowed credential. It is a UX feature you observe, not a verifier behavior.',
+    doRealLibraries:
+      'Free if you use the real browser API (Path C below). The simulator cannot reproduce it because Bluetooth and OS UI are out of scope.',
+  },
+];
+
 export const SCRIPTURE_TEXT =
   '“So whether you eat or drink or whatever you do, do it all for the glory of God.”';
 export const SCRIPTURE_CITATION = '1 Corinthians 10:31';

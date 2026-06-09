@@ -6,6 +6,7 @@ import {
   RelyingParty,
   randomChallenge,
 } from './engine';
+import { mountLiveDemo } from './live';
 
 const THEME_KEY = 'crypto-lab-theme';
 
@@ -96,6 +97,15 @@ function boot(): void {
   mountApp(root);
   wireThemeToggle();
   void selfTest();
+
+  // Path C — wire the real WebAuthn live demo. RP id falls back to the
+  // current hostname so the demo works on both localhost preview and the
+  // deployed Pages origin.
+  const liveHost = document.getElementById('live-demo-host');
+  if (liveHost) {
+    const rpId = window.location.hostname || 'localhost';
+    void mountLiveDemo(liveHost, rpId, 'crypto-lab WebAuthn');
+  }
 }
 
 if (document.readyState === 'loading') {

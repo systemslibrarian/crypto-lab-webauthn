@@ -4,6 +4,8 @@ import {
   RelyingParty,
   randomChallenge,
   shortB64,
+  AUTH_FLAG_UP,
+  AUTH_FLAG_UV,
   type Assertion,
   type StoredCredential,
   type VerifyResult,
@@ -13,6 +15,7 @@ import {
   WHY_PHISHING_FAILS,
   PASSWORD_VS_PASSKEY,
   REAL_WORLD,
+  PRODUCTION_GAPS,
   SCRIPTURE_TEXT,
   SCRIPTURE_CITATION,
 } from './data';
@@ -106,11 +109,72 @@ export function mountApp(root: HTMLDivElement): void {
     renderLogin(state),
     renderBreakIt(state),
     renderTamperPanel(state),
+    renderDiscoverableUV(state),
     renderPhishingExplainer(),
     renderCeremonyTable(),
     renderRealWorld(),
+    renderProductionGaps(),
+    renderLiveDemo(),
   );
   root.append(hero, main, renderFooter());
+}
+
+// =====================================================================
+// Production gaps (Path A — honest boundary)
+// =====================================================================
+function renderProductionGaps(): HTMLElement {
+  const section = el('section', { class: 'lab-section', id: 'production-gaps', 'aria-labelledby': 'gaps-h' });
+  section.append(
+    el('div', { class: 'section-heading-row' }, [
+      el('h2', { id: 'gaps-h', text: 'What this teaching demo does not show' }),
+      el('span', { class: 'section-kicker', text: 'Honest boundary' }),
+    ]),
+    el('p', {
+      text:
+        'A production WebAuthn relying party does more than verify a signature against five context fields. The six items below are the standard "gold-standard rubric" — what this page deliberately models, what the simulator extends (Path B, the discoverable / UV controls in the Log-in section), and what only the real browser API can give you (Path C, at the bottom of the page).',
+    }),
+  );
+
+  const grid = el('div', { class: 'reuse-grid reuse-grid--two-col' });
+  for (const gap of PRODUCTION_GAPS) {
+    grid.append(
+      el('div', { class: 'panel-card gap-card' }, [
+        el('h3', { class: 'card-title', text: gap.title }),
+        el('p', { class: 'gap-what', text: gap.what }),
+        el('p', { class: 'gap-why' }, [
+          el('strong', { text: 'In this demo: ' }),
+          document.createTextNode(gap.why),
+        ]),
+        el('p', { class: 'gap-real' }, [
+          el('strong', { text: 'In production: ' }),
+          document.createTextNode(gap.doRealLibraries),
+        ]),
+      ]),
+    );
+  }
+  section.append(grid);
+  return section;
+}
+
+// =====================================================================
+// Real WebAuthn live demo (Path C) — mounted by live.ts at runtime
+// =====================================================================
+function renderLiveDemo(): HTMLElement {
+  const section = el('section', { class: 'lab-section', id: 'live-demo', 'aria-labelledby': 'live-h' });
+  section.append(
+    el('div', { class: 'section-heading-row' }, [
+      el('h2', { id: 'live-h', text: 'Try it with a real passkey' }),
+      el('span', { class: 'section-kicker', text: 'Real navigator.credentials' }),
+    ]),
+    el('p', {
+      text:
+        'Everything above uses a simulated authenticator so the bytes are readable. This section calls the actual browser WebAuthn API. If your device has a passkey provider (Apple, Google, Windows Hello, a security key), you can register a credential and authenticate against it for real — and see the actual AAGUID, BE/BS flags, and transports the browser reports.',
+    }),
+    el('div', { class: 'panel-card', id: 'live-demo-host' }, [
+      el('p', { class: 'mono', text: 'Loading the live-demo module…' }),
+    ]),
+  );
+  return section;
 }
 
 // =====================================================================
@@ -923,7 +987,8 @@ async function runTamper(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
       // bump-counter: modify authData (which is what's signed) to have a new count
       const parts = baseline.assertion.authData.split('|');
       const rpHash = parts[0] ?? '';
-      tampered.authData = `${rpHash}|999`;
+      const flags = parts[1] ?? '5'; // default UP|UV if missing
+      tampered.authData = `${rpHash}|${flags}|999`;
       tampered.signCount = 999;
       label = 'authData: signCount bumped to 999';
       note = 'Bumped the signCount inside authData to 999. The Signature check fails because the bytes that were signed had the original (lower) count — the verifier recomputes over the new bytes and the signature does not match.';
@@ -942,6 +1007,166 @@ async function runTamper(state: DemoState, out: HTMLElement, btn: HTMLButtonElem
       expectedRpId: meta.rpId,
     });
     renderCompareResult(out, baseline, { assertion: tampered, result, meta });
+  });
+}
+
+// =====================================================================
+// Discoverable credentials + User Verification (Path B)
+// =====================================================================
+function flagsToText(f: number): string {
+  const parts: string[] = [];
+  parts.push((f & AUTH_FLAG_UP) ? 'UP' : '·');
+  parts.push((f & AUTH_FLAG_UV) ? 'UV' : '·');
+  return parts.join(' | ');
+}
+
+function renderDiscoverableUV(state: DemoState): HTMLElement {
+  const section = el('section', { class: 'lab-section', id: 'discoverable', 'aria-labelledby': 'disc-h' });
+  section.append(
+    el('div', { class: 'section-heading-row' }, [
+      el('h2', { id: 'disc-h', text: 'Discoverable credentials and User Verification' }),
+      el('span', { class: 'section-kicker', text: 'What real WebAuthn adds (UP/UV flags)' }),
+    ]),
+    el('p', {
+      text:
+        'Real WebAuthn authData carries a flags byte. Two bits matter most: UP (User Present — the user touched the device) and UV (User Verified — they completed biometric or PIN). The simulator now models both, and discoverable lookup so the relying party never has to name a credential first. Three buttons below show the standard pass, an RP that demands UV, and what happens when UV was not performed.',
+    }),
+  );
+
+  const out = el('div', {
+    class: 'panel-card',
+    id: 'discoverable-out',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Discoverable-credential / UV result',
+  });
+  out.append(el('p', { class: 'mono', text: 'Register a passkey first. Then try the three buttons.' }));
+
+  const discoverableBtn = attackButton('Discoverable login (UP+UV, RP requires UV)', '🪪');
+  const demandUvFailBtn = attackButton('RP demands UV — authenticator only did UP', '⚠️');
+  const noUpBtn = attackButton('RP demands UP — authenticator skipped UP', '🚫');
+
+  discoverableBtn.addEventListener('click', () => void runDiscoverable(state, out, discoverableBtn));
+  demandUvFailBtn.addEventListener('click', () => void runDemandUvFail(state, out, demandUvFailBtn));
+  noUpBtn.addEventListener('click', () => void runDemandUpFail(state, out, noUpBtn));
+
+  section.append(
+    el('div', { class: 'playground-grid' }, [
+      el('div', { class: 'panel-card attack-controls' }, [
+        el('p', { text: 'These run against the same registered credential. The authenticator can be told to skip UP or UV; the verifier can be told to require them.' }),
+        el('div', { class: 'attack-button-row', role: 'group', 'aria-label': 'Discoverable and UV scenarios' }, [
+          discoverableBtn, demandUvFailBtn, noUpBtn,
+        ]),
+      ]),
+      out,
+    ]),
+  );
+
+  return section;
+}
+
+async function runDiscoverable(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  if (!state.credential) {
+    renderChecksError(out, 'Register a passkey first.');
+    return;
+  }
+  await withBusy(out, btn, async () => {
+    const challenge = randomChallenge();
+    // Discoverable lookup: the authenticator picks a credential bound to rpId,
+    // RP didn't pass a credentialId.
+    const assertionOrErr = await state.auth.getAssertionByRpId(RP_ID, challenge, ORIGIN_REAL, {
+      userPresent: true,
+      userVerified: true,
+    });
+    if ('error' in assertionOrErr) {
+      renderChecksError(out, assertionOrErr.error);
+      return;
+    }
+    const meta: VerifyMeta = {
+      challenge,
+      origin: ORIGIN_REAL,
+      rpId: RP_ID,
+      note: `Authenticator picked credential by rpId (no credentialId passed in). Flags asserted: ${flagsToText(assertionOrErr.flags)}. The RP also requires UV — both check rows now appear and both pass.`,
+    };
+    const result = await state.rp.verifyAssertion(assertionOrErr, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
+      requireUP: true,
+      requireUV: true,
+    });
+    renderSingleResult(out, assertionOrErr, result, meta);
+  });
+}
+
+async function runDemandUvFail(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  if (!state.credential) {
+    renderChecksError(out, 'Register a passkey first.');
+    return;
+  }
+  await withBusy(out, btn, async () => {
+    const challenge = randomChallenge();
+    const assertionOrErr = await state.auth.getAssertion(
+      state.credential!.credentialId,
+      challenge,
+      ORIGIN_REAL,
+      RP_ID,
+      { userPresent: true, userVerified: false }, // touch only, no biometric
+    );
+    if ('error' in assertionOrErr) {
+      renderChecksError(out, assertionOrErr.error);
+      return;
+    }
+    const meta: VerifyMeta = {
+      challenge,
+      origin: ORIGIN_REAL,
+      rpId: RP_ID,
+      note: `Authenticator asserted flags ${flagsToText(assertionOrErr.flags)} — UP set, UV NOT set. The relying party demands UV. The User-verified check fails: an attacker holding the device but lacking the biometric / PIN cannot log in.`,
+    };
+    const result = await state.rp.verifyAssertion(assertionOrErr, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
+      requireUP: true,
+      requireUV: true,
+    });
+    renderSingleResult(out, assertionOrErr, result, meta);
+  });
+}
+
+async function runDemandUpFail(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  if (!state.credential) {
+    renderChecksError(out, 'Register a passkey first.');
+    return;
+  }
+  await withBusy(out, btn, async () => {
+    const challenge = randomChallenge();
+    const assertionOrErr = await state.auth.getAssertion(
+      state.credential!.credentialId,
+      challenge,
+      ORIGIN_REAL,
+      RP_ID,
+      { userPresent: false, userVerified: false },
+    );
+    if ('error' in assertionOrErr) {
+      renderChecksError(out, assertionOrErr.error);
+      return;
+    }
+    const meta: VerifyMeta = {
+      challenge,
+      origin: ORIGIN_REAL,
+      rpId: RP_ID,
+      note: `Authenticator asserted flags ${flagsToText(assertionOrErr.flags)} — UP NOT set (no user touch). The User-present check fails: even possession of the key without an explicit touch is rejected.`,
+    };
+    const result = await state.rp.verifyAssertion(assertionOrErr, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
+      requireUP: true,
+      requireUV: false,
+    });
+    renderSingleResult(out, assertionOrErr, result, meta);
   });
 }
 

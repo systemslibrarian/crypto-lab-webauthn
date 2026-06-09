@@ -404,3 +404,98 @@
   flex-direction: column;
   gap: 10px;
 }
+
+/* =====================================================================
+   Production-gaps cards (Path A)
+   ===================================================================== */
+.reuse-grid--two-col {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.gap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gap-card .card-title {
+  color: var(--accent-3);
+}
+.gap-what {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.gap-why,
+.gap-real {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+.gap-why {
+  border-left: 2px solid var(--accent-2);
+}
+.gap-real {
+  border-left: 2px solid var(--accent-4);
+}
+
+/* =====================================================================
+   Live demo (Path C)
+   ===================================================================== */
+#live-demo .panel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.live-status--available {
+  color: var(--pass-ink);
+  background: var(--pass-bg);
+}
+.live-status--unavailable {
+  color: var(--fail-ink);
+  background: var(--fail-bg);
+}
+.live-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.live-out {
+  padding: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.live-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+.live-flag {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.live-flag--on {
+  background: var(--pass-bg);
+  color: var(--pass-ink);
+  border-color: color-mix(in srgb, var(--pass-ink) 30%, var(--line));
+}
+.live-flag--off {
+  background: var(--bg-soft);
+  color: var(--ink-soft);
+}

@@ -56,24 +56,25 @@
 
   --ink-strong: #14143c;
   --ink: #2a2c5b;
-  --ink-soft: #555a85;
+  --ink-soft: #4a4f78;
   --ink-faint: #7c80a6;
 
-  --accent: #6644cc;
-  --accent-2: #1f8fc7;
-  --accent-3: #c97a16;
-  --accent-4: #1f9c63;
+  /* Accents darkened in light mode to meet WCAG AA (4.5:1) on tinted badges */
+  --accent: #5b39c0;
+  --accent-2: #0a5c87;
+  --accent-3: #8a4f08;
+  --accent-4: #146b40;
 
-  --warning-bg: rgba(201, 122, 22, 0.14);
-  --warning-ink: #a85e08;
-  --metric-bg: rgba(31, 143, 199, 0.12);
+  --warning-bg: rgba(138, 79, 8, 0.14);
+  --warning-ink: #6e3e06;
+  --metric-bg: rgba(10, 92, 135, 0.12);
 
-  --pass-bg: rgba(31, 156, 99, 0.15);
-  --pass-ink: #1f7a4c;
-  --fail-bg: rgba(196, 50, 75, 0.13);
-  --fail-ink: #b32945;
-  --pending-bg: rgba(201, 122, 22, 0.15);
-  --pending-ink: #a85e08;
+  --pass-bg: rgba(20, 107, 64, 0.15);
+  --pass-ink: #0b5b34;
+  --fail-bg: rgba(140, 26, 53, 0.13);
+  --fail-ink: #8c1a35;
+  --pending-bg: rgba(138, 79, 8, 0.15);
+  --pending-ink: #6e3e06;
 
   --shadow-1: 0 10px 24px rgba(20, 23, 60, 0.12);
   --shadow-2: 0 4px 12px rgba(20, 23, 60, 0.08);
@@ -275,18 +276,20 @@ body {
 button {
   font-family: var(--sans);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   min-height: 44px; /* WCAG 2.5.5 target size */
   padding: 10px 18px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
   background: var(--accent);
-  color: #fff;
+  /* Dark theme has a LIGHT accent (#b58cff) — use dark text for AA contrast.
+     Light theme has a DARK accent — white text. */
+  color: var(--bg);
   cursor: pointer;
   transition: filter 0.15s ease, transform 0.05s ease;
 }
 [data-theme='light'] button {
-  color: #fff;
+  color: #ffffff;
 }
 button:hover {
   filter: brightness(1.08);
@@ -329,6 +332,10 @@ button.secondary {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-sm);
+}
+.table-wrap:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
 }
 .math-table {
   width: 100%;

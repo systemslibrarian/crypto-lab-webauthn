@@ -57,11 +57,25 @@ const ORIGIN_PHISH = 'https://examp1e-login.com';
 const RP_ID_EVIL = 'evil.com';
 
 // ---- demo state held in closure across the whole UI ----
+interface BaselineSnapshot {
+  assertion: Assertion;
+  result: VerifyResult;
+  meta: VerifyMeta;
+}
 interface DemoState {
   auth: Authenticator;
   rp: RelyingParty;
   credential: StoredCredential | null;
   signCountChip: HTMLElement | null;
+  lastBaseline: BaselineSnapshot | null;
+}
+
+interface VerifyMeta {
+  challenge: string;
+  origin: string;
+  rpId: string;
+  note?: string;
+  label?: string; // shown above the result in side-by-side mode
 }
 
 function updateSignCountChip(state: DemoState): void {
@@ -71,7 +85,6 @@ function updateSignCountChip(state: DemoState): void {
   const strong = chip.querySelector('strong');
   if (strong) strong.textContent = String(current);
   chip.classList.remove('bumped');
-  // Re-trigger the animation.
   void chip.offsetWidth;
   chip.classList.add('bumped');
 }
@@ -82,14 +95,17 @@ export function mountApp(root: HTMLDivElement): void {
     rp: new RelyingParty(),
     credential: null,
     signCountChip: null,
+    lastBaseline: null,
   };
 
   const hero = renderHero(state);
   const main = el('main', { id: 'main-content', role: 'main', tabindex: '-1' });
   main.append(
+    renderCeremonyDiagram(),
     renderRegister(state),
     renderLogin(state),
     renderBreakIt(state),
+    renderTamperPanel(state),
     renderPhishingExplainer(),
     renderCeremonyTable(),
     renderRealWorld(),
@@ -159,7 +175,84 @@ function renderHero(state: DemoState): HTMLElement {
 }
 
 // =====================================================================
-// Phase 2 — Register a passkey
+// Ceremony diagram (the missing visual)
+// =====================================================================
+function renderCeremonyDiagram(): HTMLElement {
+  const section = el('section', {
+    class: 'lab-section',
+    id: 'ceremony-diagram',
+    'aria-labelledby': 'diag-h',
+  });
+  section.append(
+    el('div', { class: 'section-heading-row' }, [
+      el('h2', { id: 'diag-h', text: 'What gets signed' }),
+      el('span', { class: 'section-kicker', text: 'The whole concept in one picture' }),
+    ]),
+    el('p', {
+      text:
+        'The authenticator holds a private key that never leaves. To log in, it signs a packet of bytes that includes the origin the browser actually saw. The server, holding only the matching public key, verifies the signature and re-checks every field. Change anything about those bytes — origin, counter, challenge — and the signature stops verifying. That is the entire anti-phishing property.',
+    }),
+  );
+
+  const diagram = el('div', {
+    class: 'ceremony-diagram',
+    role: 'group',
+    'aria-label': 'Diagram of authenticator and server roles in a passkey login',
+  });
+
+  // Authenticator card
+  const authCard = el('div', { class: 'ceremony-actor ceremony-actor--auth' });
+  authCard.append(
+    el('div', { class: 'ceremony-actor-title' }, [
+      el('span', { class: 'ceremony-actor-icon', 'aria-hidden': 'true', text: '🔐' }),
+      el('h3', { text: 'Authenticator' }),
+    ]),
+    el('p', { class: 'ceremony-secret', text: 'private key — never leaves the device' }),
+    el('p', { class: 'ceremony-action mono' }, [
+      document.createTextNode('sign('),
+      el('span', { class: 'signed-field', text: 'challenge' }),
+      document.createTextNode(' ‖ '),
+      el('span', { class: 'signed-field highlight-origin', text: 'origin' }),
+      document.createTextNode(' ‖ '),
+      el('span', { class: 'signed-field', text: 'rpIdHash' }),
+      document.createTextNode(' ‖ '),
+      el('span', { class: 'signed-field', text: 'signCount' }),
+      document.createTextNode(')'),
+    ]),
+    el('p', { class: 'ceremony-caption', text: 'The origin is part of the signed bytes — that is why a phishing site cannot forge a useful signature.' }),
+  );
+
+  // Arrow with label
+  const arrow = el('div', { class: 'ceremony-arrow', 'aria-hidden': 'true' });
+  arrow.append(
+    el('span', { class: 'arrow-label', text: 'assertion (signature + signed bytes)' }),
+    el('span', { class: 'arrow-shape', text: '➜' }),
+  );
+
+  // Server card
+  const serverCard = el('div', { class: 'ceremony-actor ceremony-actor--server' });
+  serverCard.append(
+    el('div', { class: 'ceremony-actor-title' }, [
+      el('span', { class: 'ceremony-actor-icon', 'aria-hidden': 'true', text: '🛡️' }),
+      el('h3', { text: 'Relying Party server' }),
+    ]),
+    el('p', { class: 'ceremony-secret', text: 'public key only — no secret stored' }),
+    el('ul', { class: 'ceremony-checks' }, [
+      el('li', { text: 'verify ECDSA signature with stored public key' }),
+      el('li', { text: 'challenge fresh? (anti-replay)' }),
+      el('li', { text: 'origin matches expected? (anti-phishing)' }),
+      el('li', { text: 'rpIdHash matches expected?' }),
+      el('li', { text: 'signCount strictly increasing? (clone detection)' }),
+    ]),
+  );
+
+  diagram.append(authCard, arrow, serverCard);
+  section.append(diagram);
+  return section;
+}
+
+// =====================================================================
+// Register a passkey
 // =====================================================================
 function renderRegister(state: DemoState): HTMLElement {
   const section = el('section', { class: 'lab-section', id: 'register', 'aria-labelledby': 'register-h' });
@@ -194,6 +287,7 @@ function renderRegister(state: DemoState): HTMLElement {
         const cred = await state.auth.makeCredential(RP_ID);
         state.rp.register(cred);
         state.credential = cred;
+        state.lastBaseline = null;
         renderCredential(out, cred);
         updateSignCountChip(state);
       } catch (err) {
@@ -226,9 +320,8 @@ function renderCredential(container: HTMLElement, cred: StoredCredential): void 
   const y = cred.publicKeyJwk.y ? shortB64(cred.publicKeyJwk.y, 22) : '?';
 
   const table = el('table', { class: 'math-table' });
-  const caption = el('caption', { class: 'visually-hidden', text: 'Stored credential fields registered with the relying party' });
   table.append(
-    caption,
+    el('caption', { class: 'visually-hidden', text: 'Stored credential fields registered with the relying party' }),
     rowTH('Stored credential', 'value (truncated)'),
     row('Credential ID', shortB64(cred.credentialId, 22)),
     row('RP ID', cred.rpId),
@@ -238,7 +331,7 @@ function renderCredential(container: HTMLElement, cred: StoredCredential): void 
     row('signCount', String(cred.signCount)),
   );
   container.append(
-    el('div', { class: 'table-wrap' }, [table]),
+    el('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Stored credential fields' }, [table]),
     el('p', {
       class: 'mono',
       text: 'The server stores all of this. It has no copy of the private key — there is no secret on the server to steal.',
@@ -258,7 +351,7 @@ function row(a: string, b: string): HTMLTableRowElement {
 }
 
 // =====================================================================
-// Phase 3 — Authenticate
+// Authenticate
 // =====================================================================
 function renderLogin(state: DemoState): HTMLElement {
   const section = el('section', { class: 'lab-section', id: 'login', 'aria-labelledby': 'login-h' });
@@ -304,12 +397,16 @@ function renderLogin(state: DemoState): HTMLElement {
           renderChecksError(out, assertionOrErr.error);
           return;
         }
+        const meta: VerifyMeta = { challenge, origin: ORIGIN_REAL, rpId: RP_ID };
         const result = await state.rp.verifyAssertion(assertionOrErr, {
-          expectedChallenge: challenge,
-          expectedOrigin: ORIGIN_REAL,
-          expectedRpId: RP_ID,
+          expectedChallenge: meta.challenge,
+          expectedOrigin: meta.origin,
+          expectedRpId: meta.rpId,
         });
-        renderVerifyResult(out, result, { challenge, origin: ORIGIN_REAL, rpId: RP_ID });
+        if (result.ok) {
+          state.lastBaseline = { assertion: assertionOrErr, result, meta };
+        }
+        renderSingleResult(out, assertionOrErr, result, meta);
         updateSignCountChip(state);
       } catch (err) {
         renderChecksError(out, `Unexpected error: ${(err as Error).message}`);
@@ -331,36 +428,81 @@ function renderLogin(state: DemoState): HTMLElement {
   return section;
 }
 
-interface VerifyMeta {
-  challenge: string;
-  origin: string;
-  rpId: string;
-  note?: string;
+// =====================================================================
+// Rendering verify results (single + side-by-side)
+// =====================================================================
+function renderSingleResult(
+  container: HTMLElement,
+  assertion: Assertion,
+  result: VerifyResult,
+  meta: VerifyMeta,
+): void {
+  container.replaceChildren(renderResultBlock(assertion, result, meta, false));
+  if (meta.note) {
+    container.append(el('p', { class: 'verify-note mono', text: meta.note }));
+  }
 }
 
-function renderVerifyResult(container: HTMLElement, result: VerifyResult, meta: VerifyMeta): void {
-  container.replaceChildren();
+function renderCompareResult(
+  container: HTMLElement,
+  baseline: BaselineSnapshot,
+  attack: { assertion: Assertion; result: VerifyResult; meta: VerifyMeta },
+): void {
+  const grid = el('div', { class: 'compare-grid' });
+  grid.append(
+    el('div', { class: 'compare-col compare-col--baseline' }, [
+      el('h4', { class: 'compare-col-title' }, [
+        el('span', { class: 'compare-col-icon scenario-status scenario-status--valid', text: '✓' }),
+        document.createTextNode('Baseline'),
+      ]),
+      renderResultBlock(baseline.assertion, baseline.result, baseline.meta, true),
+    ]),
+    el('div', { class: 'compare-col compare-col--attack' }, [
+      el('h4', { class: 'compare-col-title' }, [
+        el('span', {
+          class: `compare-col-icon scenario-status ${attack.result.ok ? 'scenario-status--valid' : 'scenario-status--invalid'}`,
+          text: attack.result.ok ? '✓' : '✗',
+        }),
+        document.createTextNode(attack.meta.label ?? 'Attack'),
+      ]),
+      renderResultBlock(attack.assertion, attack.result, attack.meta, true),
+    ]),
+  );
+  container.replaceChildren(grid);
+  if (attack.meta.note) {
+    container.append(el('p', { class: 'verify-note mono', text: attack.meta.note }));
+  }
+}
 
-  const overallBadge = el('span', {
-    class: `scenario-status ${result.ok ? 'scenario-status--valid' : 'scenario-status--invalid'}`,
-    text: result.ok ? 'Authenticated' : 'Rejected',
-  });
-  container.append(
+function renderResultBlock(
+  assertion: Assertion,
+  result: VerifyResult,
+  meta: VerifyMeta,
+  compact: boolean,
+): HTMLElement {
+  const wrap = el('div', { class: 'result-block' });
+
+  wrap.append(
     el('div', { class: 'verify-header' }, [
-      overallBadge,
+      el('span', {
+        class: `scenario-status ${result.ok ? 'scenario-status--valid' : 'scenario-status--invalid'}`,
+        text: result.ok ? 'Authenticated' : 'Rejected',
+      }),
       el('span', { class: 'verify-summary', text: result.summary }),
     ]),
   );
 
-  const ctxBlock = el('table', { class: 'math-table' });
-  ctxBlock.append(
-    el('caption', { class: 'visually-hidden', text: 'Verifier context the server compared against the assertion' }),
-    rowTH('Verifier context', 'value'),
-    row('expectedChallenge', shortB64(meta.challenge, 22)),
-    row('expectedOrigin', meta.origin),
-    row('expectedRpId', meta.rpId),
-  );
-  container.append(el('div', { class: 'table-wrap' }, [ctxBlock]));
+  if (!compact) {
+    const ctxBlock = el('table', { class: 'math-table' });
+    ctxBlock.append(
+      el('caption', { class: 'visually-hidden', text: 'Verifier context the server compared against the assertion' }),
+      rowTH('Verifier context', 'value'),
+      row('expectedChallenge', shortB64(meta.challenge, 22)),
+      row('expectedOrigin', meta.origin),
+      row('expectedRpId', meta.rpId),
+    );
+    wrap.append(el('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Verifier context table' }, [ctxBlock]));
+  }
 
   const list = el('ul', { class: 'check-list', 'aria-label': 'Per-check verification rows' });
   let spotlighted = false;
@@ -380,11 +522,50 @@ function renderVerifyResult(container: HTMLElement, result: VerifyResult, meta: 
     );
     list.append(li);
   }
-  container.append(list);
+  wrap.append(list);
 
-  if (meta.note) {
-    container.append(el('p', { class: 'verify-note mono', text: meta.note }));
+  wrap.append(renderSignedBytesPanel(assertion, meta.origin));
+  return wrap;
+}
+
+function renderSignedBytesPanel(assertion: Assertion, expectedOrigin: string): HTMLElement {
+  const panel = el('div', { class: 'signed-bytes', 'aria-label': 'Real bytes the authenticator signed' });
+  panel.append(
+    el('p', { class: 'signed-bytes-title' }, [
+      el('span', { class: 'signed-bytes-eyebrow', text: 'What the authenticator actually signed' }),
+    ]),
+  );
+
+  // clientDataJSON with origin highlighted
+  const clientDataDt = el('dt', { text: 'clientDataJSON' });
+  const clientDataDd = el('dd');
+  try {
+    const obj = JSON.parse(assertion.clientDataJSON) as { type: string; challenge: string; origin: string };
+    const originMatches = obj.origin === expectedOrigin;
+    const originClass = originMatches ? 'highlight-origin highlight-origin--match' : 'highlight-origin highlight-origin--mismatch';
+    clientDataDd.append(
+      document.createTextNode(`{"type":"${obj.type}","challenge":"${shortB64(obj.challenge, 12)}","origin":"`),
+      el('span', { class: originClass, text: obj.origin }),
+      document.createTextNode('"}'),
+    );
+  } catch {
+    clientDataDd.textContent = assertion.clientDataJSON;
   }
+
+  const authDataDt = el('dt', { text: 'authData (rpIdHash | signCount)' });
+  const authDataDd = el('dd', { class: 'mono', text: shortB64(assertion.authData, 60) });
+
+  const sigDt = el('dt', { text: 'ECDSA signature (base64, truncated)' });
+  const sigDd = el('dd', { class: 'mono', text: shortB64(assertion.signatureB64, 60) });
+
+  const dl = el('dl', { class: 'signed-bytes-dl' });
+  dl.append(clientDataDt, clientDataDd, authDataDt, authDataDd, sigDt, sigDd);
+  panel.append(dl);
+
+  panel.append(
+    el('p', { class: 'signed-bytes-note', text: 'These are the real bytes. The signature ties them all together — change one character of clientDataJSON or one bit of the signature and ECDSA verification fails.' }),
+  );
+  return panel;
 }
 
 function renderChecksError(container: HTMLElement, message: string): void {
@@ -397,7 +578,7 @@ function renderChecksError(container: HTMLElement, message: string): void {
 }
 
 // =====================================================================
-// Phase 4 — Break it
+// Break it — four attack controls (now with side-by-side baseline)
 // =====================================================================
 function attackButton(label: string, emoji: string): HTMLButtonElement {
   const btn = el('button', { type: 'button', class: 'secondary' });
@@ -417,7 +598,7 @@ function renderBreakIt(state: DemoState): HTMLElement {
     ]),
     el('p', {
       text:
-        'Each control re-runs authentication under a specific attack. Look at WHICH check fails — that is what makes the design phishing-resistant.',
+        'Authenticate first to capture a baseline. Then run an attack — the baseline is held next to the result so you can see exactly which check changes.',
     }),
   );
 
@@ -429,7 +610,7 @@ function renderBreakIt(state: DemoState): HTMLElement {
     'aria-atomic': 'true',
     'aria-label': 'Attack scenario result',
   });
-  out.append(el('p', { class: 'mono', text: 'No attack run yet. Pick one of the controls.' }));
+  out.append(el('p', { class: 'mono', text: 'No attack run yet. Authenticate first, then pick a scenario.' }));
 
   const phishBtn = attackButton('Phishing site', '👻');
   const replayBtn = attackButton('Replay assertion', '🔁');
@@ -470,16 +651,25 @@ async function withBusy(out: HTMLElement, btn: HTMLButtonElement, fn: () => Prom
   }
 }
 
-async function runPhishing(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+function requireBaseline(state: DemoState, out: HTMLElement): BaselineSnapshot | null {
   if (!state.credential) {
     renderChecksError(out, 'Register a passkey first.');
-    return;
+    return null;
   }
+  if (!state.lastBaseline) {
+    renderChecksError(out, 'Click "Authenticate" first to capture a baseline. Each attack is shown alongside it.');
+    return null;
+  }
+  return state.lastBaseline;
+}
+
+async function runPhishing(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  const baseline = requireBaseline(state, out);
+  if (!baseline) return;
   await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
-    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      cred.credentialId,
+      state.credential!.credentialId,
       challenge,
       ORIGIN_PHISH,
       RP_ID,
@@ -488,80 +678,61 @@ async function runPhishing(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    const result = await state.rp.verifyAssertion(assertionOrErr, {
-      expectedChallenge: challenge,
-      expectedOrigin: ORIGIN_REAL,
-      expectedRpId: RP_ID,
-    });
-    renderVerifyResult(out, result, {
+    const meta: VerifyMeta = {
       challenge,
       origin: ORIGIN_REAL,
       rpId: RP_ID,
+      label: 'Phishing site',
       note: `Authenticator signed origin ${ORIGIN_PHISH}; verifier expected ${ORIGIN_REAL}. The look-alike domain cannot produce a usable assertion because the real origin is baked into what gets signed.`,
+    };
+    const result = await state.rp.verifyAssertion(assertionOrErr, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
     });
+    renderCompareResult(out, baseline, { assertion: assertionOrErr, result, meta });
     updateSignCountChip(state);
   });
 }
 
 async function runReplay(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
-  if (!state.credential) {
-    renderChecksError(out, 'Register a passkey first.');
-    return;
-  }
+  const baseline = requireBaseline(state, out);
+  if (!baseline) return;
   await withBusy(out, btn, async () => {
-    const challenge1 = randomChallenge();
-    const cred = state.credential!;
-    const assertionOrErr = await state.auth.getAssertion(
-      cred.credentialId,
-      challenge1,
-      ORIGIN_REAL,
-      RP_ID,
-    );
-    if ('error' in assertionOrErr) {
-      renderChecksError(out, assertionOrErr.error);
-      return;
-    }
-    const first = await state.rp.verifyAssertion(assertionOrErr, {
-      expectedChallenge: challenge1,
-      expectedOrigin: ORIGIN_REAL,
-      expectedRpId: RP_ID,
-    });
-    if (!first.ok) {
-      renderVerifyResult(out, first, { challenge: challenge1, origin: ORIGIN_REAL, rpId: RP_ID });
-      return;
-    }
     const challenge2 = randomChallenge();
-    const replayed = await state.rp.verifyAssertion(assertionOrErr, {
+    const replayed = await state.rp.verifyAssertion(baseline.assertion, {
       expectedChallenge: challenge2,
       expectedOrigin: ORIGIN_REAL,
       expectedRpId: RP_ID,
     });
-    renderVerifyResult(out, replayed, {
+    const meta: VerifyMeta = {
       challenge: challenge2,
       origin: ORIGIN_REAL,
       rpId: RP_ID,
-      note: 'A valid assertion was captured and replayed against a fresh challenge. The signed challenge does not match the new one — replay blocked.',
-    });
-    updateSignCountChip(state);
+      label: 'Replay attempt',
+      note: 'The same assertion from the baseline is being replayed against a brand-new challenge. The signed challenge does not match the fresh one — replay blocked.',
+    };
+    renderCompareResult(out, baseline, { assertion: baseline.assertion, result: replayed, meta });
   });
 }
 
 async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
-  if (!state.credential) {
-    renderChecksError(out, 'Register a passkey first.');
-    return;
-  }
+  const baseline = requireBaseline(state, out);
+  if (!baseline) return;
   await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
-    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      cred.credentialId,
+      state.credential!.credentialId,
       challenge,
       `https://${RP_ID_EVIL}`,
       RP_ID_EVIL,
     );
     if ('error' in assertionOrErr) {
-      out.replaceChildren(
+      const refusedCol = el('div', { class: 'compare-col compare-col--attack' }, [
+        el('h4', { class: 'compare-col-title' }, [
+          el('span', { class: 'compare-col-icon scenario-status scenario-status--invalid', text: '✗' }),
+          document.createTextNode('Wrong relying party'),
+        ]),
         el('div', { class: 'verify-header' }, [
           el('span', { class: 'scenario-status scenario-status--invalid', text: 'Refused by authenticator' }),
           el('span', { class: 'verify-summary', text: assertionOrErr.error }),
@@ -570,28 +741,43 @@ async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonEle
           class: 'verify-note mono',
           text: `Credential is bound to ${RP_ID}; the authenticator will not produce an assertion for ${RP_ID_EVIL}. The verifier never even sees a signature.`,
         }),
+      ]);
+      const grid = el('div', { class: 'compare-grid' });
+      grid.append(
+        el('div', { class: 'compare-col compare-col--baseline' }, [
+          el('h4', { class: 'compare-col-title' }, [
+            el('span', { class: 'compare-col-icon scenario-status scenario-status--valid', text: '✓' }),
+            document.createTextNode('Baseline'),
+          ]),
+          renderResultBlock(baseline.assertion, baseline.result, baseline.meta, true),
+        ]),
+        refusedCol,
       );
+      out.replaceChildren(grid);
       return;
     }
+    const meta: VerifyMeta = {
+      challenge,
+      origin: ORIGIN_REAL,
+      rpId: RP_ID,
+      label: 'Wrong relying party',
+    };
     const result = await state.rp.verifyAssertion(assertionOrErr, {
-      expectedChallenge: challenge,
-      expectedOrigin: ORIGIN_REAL,
-      expectedRpId: RP_ID,
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
     });
-    renderVerifyResult(out, result, { challenge, origin: ORIGIN_REAL, rpId: RP_ID });
+    renderCompareResult(out, baseline, { assertion: assertionOrErr, result, meta });
   });
 }
 
 async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonElement): Promise<void> {
-  if (!state.credential) {
-    renderChecksError(out, 'Register a passkey first.');
-    return;
-  }
+  const baseline = requireBaseline(state, out);
+  if (!baseline) return;
   await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
-    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      cred.credentialId,
+      state.credential!.credentialId,
       challenge,
       ORIGIN_REAL,
       RP_ID,
@@ -600,19 +786,20 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    // Simulate a clone: counter has not advanced as far as the real authenticator.
     const cloned: Assertion = { ...assertionOrErr, signCount: 0 };
-    const result = await state.rp.verifyAssertion(cloned, {
-      expectedChallenge: challenge,
-      expectedOrigin: ORIGIN_REAL,
-      expectedRpId: RP_ID,
-    });
-    renderVerifyResult(out, result, {
+    const meta: VerifyMeta = {
       challenge,
       origin: ORIGIN_REAL,
       rpId: RP_ID,
+      label: 'Cloned authenticator',
       note: 'A clone of the authenticator would lag behind on the monotonic counter. The server sees signCount go backwards and flags it — clone detection.',
+    };
+    const result = await state.rp.verifyAssertion(cloned, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
     });
+    renderCompareResult(out, baseline, { assertion: cloned, result, meta });
     updateSignCountChip(state);
   });
 }
@@ -624,9 +811,8 @@ async function runBaseline(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
   }
   await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
-    const cred = state.credential!;
     const assertionOrErr = await state.auth.getAssertion(
-      cred.credentialId,
+      state.credential!.credentialId,
       challenge,
       ORIGIN_REAL,
       RP_ID,
@@ -635,18 +821,127 @@ async function runBaseline(state: DemoState, out: HTMLElement, btn: HTMLButtonEl
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    const result = await state.rp.verifyAssertion(assertionOrErr, {
-      expectedChallenge: challenge,
-      expectedOrigin: ORIGIN_REAL,
-      expectedRpId: RP_ID,
-    });
-    renderVerifyResult(out, result, {
+    const meta: VerifyMeta = {
       challenge,
       origin: ORIGIN_REAL,
       rpId: RP_ID,
       note: 'Baseline restored: a clean authentication against the real relying party with a fresh challenge.',
+    };
+    const result = await state.rp.verifyAssertion(assertionOrErr, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
     });
+    if (result.ok) {
+      state.lastBaseline = { assertion: assertionOrErr, result, meta };
+    }
+    renderSingleResult(out, assertionOrErr, result, meta);
     updateSignCountChip(state);
+  });
+}
+
+// =====================================================================
+// Tamper interactive — the signature seals everything
+// =====================================================================
+function renderTamperPanel(state: DemoState): HTMLElement {
+  const section = el('section', { class: 'lab-section', id: 'tamper', 'aria-labelledby': 'tamper-h' });
+  section.append(
+    el('div', { class: 'section-heading-row' }, [
+      el('h2', { id: 'tamper-h', text: 'Try tampering with a good assertion' }),
+      el('span', { class: 'section-kicker', text: 'The signature seals everything' }),
+    ]),
+    el('p', {
+      text:
+        'Take the last successful baseline assertion and modify one field after the fact. Because the ECDSA signature was computed over the exact bytes, any change makes verification fail. This is what "the origin is signed" actually means.',
+    }),
+  );
+
+  const out = el('div', {
+    class: 'panel-card',
+    id: 'tamper-out',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+    'aria-label': 'Tamper attempt result',
+  });
+  out.append(el('p', { class: 'mono', text: 'Authenticate first to capture a baseline, then try a tamper.' }));
+
+  const flipSigBtn = attackButton('Flip 1 bit of signature', '🔧');
+  const forgeOriginBtn = attackButton('Forge origin in clientDataJSON', '🎭');
+  const bumpCounterBtn = attackButton('Bump signCount in authData', '🔢');
+
+  flipSigBtn.addEventListener('click', () => void runTamper(state, out, flipSigBtn, 'flip-sig'));
+  forgeOriginBtn.addEventListener('click', () => void runTamper(state, out, forgeOriginBtn, 'forge-origin'));
+  bumpCounterBtn.addEventListener('click', () => void runTamper(state, out, bumpCounterBtn, 'bump-counter'));
+
+  section.append(
+    el('div', { class: 'playground-grid' }, [
+      el('div', { class: 'panel-card attack-controls' }, [
+        el('p', { text: 'Each button mutates one field of the baseline assertion. Watch the Signature check turn red.' }),
+        el('div', { class: 'attack-button-row', role: 'group', 'aria-label': 'Tampering experiments' }, [
+          flipSigBtn, forgeOriginBtn, bumpCounterBtn,
+        ]),
+      ]),
+      out,
+    ]),
+  );
+
+  return section;
+}
+
+type TamperKind = 'flip-sig' | 'forge-origin' | 'bump-counter';
+
+function flipFirstBit(b64s: string): string {
+  const bin = atob(b64s);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  buf[0] ^= 0x01;
+  let s = '';
+  for (let i = 0; i < buf.length; i++) s += String.fromCharCode(buf[i]);
+  return btoa(s);
+}
+
+async function runTamper(state: DemoState, out: HTMLElement, btn: HTMLButtonElement, kind: TamperKind): Promise<void> {
+  const baseline = requireBaseline(state, out);
+  if (!baseline) return;
+  await withBusy(out, btn, async () => {
+    let tampered: Assertion = { ...baseline.assertion };
+    let note = '';
+    let label = '';
+
+    if (kind === 'flip-sig') {
+      tampered.signatureB64 = flipFirstBit(baseline.assertion.signatureB64);
+      label = 'Signature: 1 bit flipped';
+      note = 'Flipped one bit of the base64-decoded signature. ECDSA refuses to verify — even a single-bit change is detected. This is the "real crypto" property: the signature is not a checksum that ignores noise.';
+    } else if (kind === 'forge-origin') {
+      const client = JSON.parse(baseline.assertion.clientDataJSON) as { type: string; challenge: string; origin: string };
+      client.origin = ORIGIN_PHISH;
+      tampered.clientDataJSON = JSON.stringify(client);
+      label = 'clientDataJSON: origin forged';
+      note = `Rewrote the origin field in clientDataJSON to ${ORIGIN_PHISH} after the authenticator signed it. The Origin check fails AND the Signature check fails: the signed bytes contained the real origin's hash, so changing it invalidates both.`;
+    } else {
+      // bump-counter: modify authData (which is what's signed) to have a new count
+      const parts = baseline.assertion.authData.split('|');
+      const rpHash = parts[0] ?? '';
+      tampered.authData = `${rpHash}|999`;
+      tampered.signCount = 999;
+      label = 'authData: signCount bumped to 999';
+      note = 'Bumped the signCount inside authData to 999. The Signature check fails because the bytes that were signed had the original (lower) count — the verifier recomputes over the new bytes and the signature does not match.';
+    }
+
+    const meta: VerifyMeta = {
+      challenge: baseline.meta.challenge,
+      origin: ORIGIN_REAL,
+      rpId: RP_ID,
+      label,
+      note,
+    };
+    const result = await state.rp.verifyAssertion(tampered, {
+      expectedChallenge: meta.challenge,
+      expectedOrigin: meta.origin,
+      expectedRpId: meta.rpId,
+    });
+    renderCompareResult(out, baseline, { assertion: tampered, result, meta });
   });
 }
 
@@ -703,7 +998,7 @@ function renderPhishingExplainer(): HTMLElement {
     );
     table.append(tr);
   }
-  section.append(el('div', { class: 'table-wrap' }, [table]));
+  section.append(el('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Password vs passkey comparison' }, [table]));
 
   return section;
 }
@@ -741,7 +1036,7 @@ function renderCeremonyTable(): HTMLElement {
     );
     table.append(tr);
   }
-  section.append(el('div', { class: 'table-wrap' }, [table]));
+  section.append(el('div', { class: 'table-wrap', tabindex: '0', role: 'region', 'aria-label': 'Ceremony steps' }, [table]));
   return section;
 }
 

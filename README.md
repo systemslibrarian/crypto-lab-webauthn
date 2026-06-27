@@ -15,27 +15,44 @@ A faithful model of the WebAuthn / FIDO2 passkey ceremony using **real ECDSA P-2
 
 ## Live Demo
 
-[**https://systemslibrarian.github.io/crypto-lab-webauthn/**](https://systemslibrarian.github.io/crypto-lab-webauthn/)
+**[systemslibrarian.github.io/crypto-lab-webauthn](https://systemslibrarian.github.io/crypto-lab-webauthn/)**
 
 The page is built around a single register-then-authenticate flow followed by four attacks. **Create passkey** generates a fresh ECDSA P-256 keypair on the simulated authenticator and registers the public half with the simulated server. **Authenticate** issues a new challenge, signs `(challenge ‖ origin ‖ rpIdHash ‖ counter)`, and prints every server-side check with a pass/fail badge plus the verifier context (expectedChallenge, expectedOrigin, expectedRpId). The **Break it** controls re-run the ceremony four ways: **Phishing site** signs with `https://examp1e-login.com` while the server still expects `https://example.com` — the Origin check fails. **Replay** captures a valid assertion, verifies it once successfully, then verifies the same assertion against a fresh challenge — the Challenge check fails. **Wrong relying party** asks the authenticator for an assertion for `evil.com` — the authenticator itself refuses, and the server never sees a signature. **Cloned authenticator** lowers the counter on a fresh assertion to simulate a clone whose local count has fallen behind — the Counter check fails. A reset baseline button always restores a clean authentication so you can try the next attack.
+
+## What Can Go Wrong
+
+- Skipping the origin or RP ID check defeats phishing resistance — a look-alike origin must be rejected, which is the whole point of WebAuthn.
+- Failing to validate a fresh, server-issued challenge allows a captured assertion to be replayed.
+- Ignoring the signature counter misses cloned-authenticator detection.
+- Trusting client-supplied values (origin, challenge) instead of comparing them against server-side expectations breaks the entire model.
+- Hand-rolling CBOR/COSE and attestation parsing is error-prone; production verifiers should use vetted libraries (this demo deliberately models only the security logic, not the wire format).
+
+## Real-World Usage
+
+- Passkeys and FIDO2/WebAuthn power passwordless, phishing-resistant login across major browsers and platforms (Apple, Google, Microsoft).
+- Hardware security keys (such as YubiKeys) use the same ceremony as a second factor in enterprise and consumer accounts.
+- Relying-party web apps implement these checks via libraries like SimpleWebAuthn, py_webauthn, webauthn4j, and fido2-net-lib.
+- "No shared secret on the server" reduces the blast radius of a database breach compared with stored passwords.
 
 ## How to Run Locally
 
 ```bash
-git clone https://github.com/systemslibrarian/crypto-lab-webauthn.git
+git clone https://github.com/systemslibrarian/crypto-lab-webauthn
 cd crypto-lab-webauthn
 npm install
-npm run dev      # local dev server with HMR
-npm run build    # type-check + production build to dist/
-npm run preview  # serve the built dist/ locally
+npm run dev
 ```
 
-No environment variables, no API keys, no servers. Everything runs client-side in the browser against Web Crypto.
+## Related Demos
 
-## Part of the Crypto-Lab Suite
-
-This is one demo in a wider portfolio of interactive cryptography labs — see [systemslibrarian.github.io/crypto-lab](https://systemslibrarian.github.io/crypto-lab/) for the rest, including the five PQC families overview, hybrid TLS, harvest-now-decrypt-later timelines, key-exchange generations, and deep-dives on individual schemes.
+- [crypto-lab-ssh-handshake](https://systemslibrarian.github.io/crypto-lab-ssh-handshake/) — public-key authentication with Ed25519 and trust-on-first-use.
+- [crypto-lab-opaque-gate](https://systemslibrarian.github.io/crypto-lab-opaque-gate/) — password-authenticated key exchange that also keeps no server-side secret.
+- [crypto-lab-kerberos](https://systemslibrarian.github.io/crypto-lab-kerberos/) — a deployed authentication protocol and the attacks against it.
+- [crypto-lab-pki-chain](https://systemslibrarian.github.io/crypto-lab-pki-chain/) — X.509 certificates and the trust chain behind web identity.
+- [crypto-lab-ecdsa-forge](https://systemslibrarian.github.io/crypto-lab-ecdsa-forge/) — the ECDSA P-256 signatures that WebAuthn assertions rely on.
 
 ---
 
-"So whether you eat or drink or whatever you do, do it all for the glory of God." — 1 Corinthians 10:31
+*One of 60+ browser demos in the [Crypto Lab](https://crypto-lab.systemslibrarian.dev/) suite.*
+
+*"So whether you eat or drink or whatever you do, do it all for the glory of God." — 1 Corinthians 10:31*

@@ -1299,6 +1299,18 @@ function renderRealWorld(): HTMLElement {
 function renderFooter(): HTMLElement {
   const footer = el('footer', { class: 'scripture-footer', role: 'contentinfo' });
   footer.append(
+    el('p', { class: 'footer-related' }, [
+      'Related demos: ',
+      el('a', { href: 'https://systemslibrarian.github.io/crypto-lab-ssh-handshake/', text: 'crypto-lab-ssh-handshake' }),
+      ' · ',
+      el('a', { href: 'https://systemslibrarian.github.io/crypto-lab-opaque-gate/', text: 'crypto-lab-opaque-gate' }),
+      ' · ',
+      el('a', { href: 'https://systemslibrarian.github.io/crypto-lab-kerberos/', text: 'crypto-lab-kerberos' }),
+      ' · ',
+      el('a', { href: 'https://systemslibrarian.github.io/crypto-lab-pki-chain/', text: 'crypto-lab-pki-chain' }),
+      ' · ',
+      el('a', { href: 'https://systemslibrarian.github.io/crypto-lab-ecdsa-forge/', text: 'crypto-lab-ecdsa-forge' }),
+    ]),
     el('p', { text: SCRIPTURE_TEXT }),
     el('cite', { text: `— ${SCRIPTURE_CITATION}` }),
   );

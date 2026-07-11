@@ -413,6 +413,21 @@ pre {
   font-style: normal;
   color: var(--ink);
 }
+.footer-related {
+  font-style: normal;
+}
+/* Inline text links: color-only differentiation fails link-in-text-block, and
+   the browser default anchor blue also under-contrasts the dark footer bg. Use
+   the demo's own accent (>=4.5:1 in both themes) and keep a persistent
+   underline so the links are distinguishable without relying on color. */
+.footer-related a {
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+.footer-related a:hover,
+.footer-related a:focus-visible {
+  color: var(--ink-strong);
+}
 
 @media (max-width: 600px) {
   #app {

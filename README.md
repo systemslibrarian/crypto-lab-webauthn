@@ -43,6 +43,19 @@ npm install
 npm run dev
 ```
 
+## Tests
+
+The security-critical engine has a fast, isolated unit suite (`test/engine.test.ts`, run with `npm test` via Vitest) that asserts the pure ceremony logic directly — no browser required:
+
+- **Known-answer tests**: the SHA-256 RP-ID digest and a frozen ECDSA P-256 verification vector, so a change in the underlying primitives is caught immediately.
+- **Happy path**: register → authenticate → verify passes all five checks, the stored credential carries only a public JWK (no private scalar `d`), and the counter increases per assertion.
+- **The four attacks**: phishing trips Origin, replay trips Challenge, a wrong-RP request is refused by the authenticator, and a clone trips Counter — each on exactly the right check.
+- **Counter/signature independence**: mutating the *signed* counter inside `authData` breaks the **signature**, while lowering only the unsigned `signCount` field the verifier reads breaks the **counter** but leaves the signature valid — proving the two checks are independent.
+- **Forgery rejection**: a flipped signature bit, a forged origin, and a substituted public key all fail signature verification; strict counter monotonicity rejects equal counts.
+- **UP/UV policy** and **discoverable-credential** lookup gates.
+
+The build (`npm run build`), a WCAG A/AA accessibility gate (`npm run test:a11y`, axe-core, both themes), and a real-browser end-to-end walkthrough (`npm run test:e2e`) round out the checks.
+
 ## Related Demos
 
 - [crypto-lab-ssh-handshake](https://systemslibrarian.github.io/crypto-lab-ssh-handshake/) — public-key authentication with Ed25519 and trust-on-first-use.

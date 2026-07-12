@@ -181,8 +181,11 @@ function renderLiveDemo(): HTMLElement {
 // Hero
 // =====================================================================
 function renderHero(state: DemoState): HTMLElement {
-  const section = el('header', { class: 'hero-panel', role: 'banner' });
+  // Fleet-standard hero: title block on the left, "why it matters" on the right.
+  const section = el('header', { class: 'cl-hero' });
 
+  // In-page theme toggle. The shared topbar hides this (#theme-toggle) and drives
+  // theming via its own control, but main.ts still wires it, so it must exist.
   const toggle = el('button', {
     class: 'theme-toggle',
     id: 'theme-toggle',
@@ -191,34 +194,6 @@ function renderHero(state: DemoState): HTMLElement {
     text: '🌙',
   });
   section.append(toggle);
-
-  section.append(
-    el('p', { class: 'hero-eyebrow', text: 'Authentication · Passkeys' }),
-    el('h1', { text: 'WebAuthn passkeys — login without a shared secret' }),
-    el('p', {
-      class: 'hero-lede',
-      text:
-        'Passwords are shared secrets you type into whatever page asks. Phishing works because that page does not have to be the real one. Passkeys flip the model: your authenticator keeps a private key per site, signs each login with the origin baked in, and the server only ever stores a public key. Below: a real ECDSA P-256 ceremony, then four attacks that bounce off it.',
-    }),
-  );
-
-  const details = el('details');
-  details.append(
-    el('summary', { text: 'How is this different from a password?' }),
-    el('p', {
-      text:
-        'With a password, the server holds a secret (a hash) that has to match what you type. A phishing page can collect the typed secret and replay it. With a passkey, there is no shared secret at all — the server has a public key, the authenticator has the matching private key, and every login is a fresh challenge that the authenticator signs along with the actual origin the browser saw.',
-    }),
-  );
-  section.append(details);
-
-  const metricRow = el('div', { class: 'hero-metric-row' });
-  metricRow.append(
-    el('div', {
-      class: 'hero-metric',
-      text: 'Real ECDSA P-256 · private key never leaves the authenticator · phishing-resistant',
-    }),
-  );
 
   const chip = el('div', {
     class: 'sign-count-chip',
@@ -232,9 +207,28 @@ function renderHero(state: DemoState): HTMLElement {
     el('strong', { text: '0' }),
   );
   state.signCountChip = chip;
-  metricRow.append(chip);
-  section.append(metricRow);
 
+  const main = el('div', { class: 'cl-hero-main' }, [
+    el('h1', { class: 'cl-hero-title', text: 'WebAuthn' }),
+    el('p', { class: 'cl-hero-sub', text: 'Passkeys · ECDSA P-256 · FIDO2/WebAuthn' }),
+    el('p', {
+      class: 'cl-hero-desc',
+      text:
+        'Run a real WebAuthn ceremony with live ECDSA P-256 keys, then fire phishing, replay, and clone attacks and watch the origin-bound signature reject each one.',
+    }),
+    chip,
+  ]);
+
+  const why = el('aside', { class: 'cl-hero-why', 'aria-label': 'Why it matters' }, [
+    el('span', { class: 'cl-hero-why-label', text: 'WHY IT MATTERS' }),
+    el('p', {
+      class: 'cl-hero-why-text',
+      text:
+        'Passwords are shared secrets a fake login page can capture and replay. A passkey signs the origin the browser actually saw, so a credential stolen on a phishing site is worthless anywhere else — killing the most common account-takeover attack.',
+    }),
+  ]);
+
+  section.append(main, why);
   return section;
 }
 

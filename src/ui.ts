@@ -509,14 +509,14 @@ function renderCompareResult(
   const grid = el('div', { class: 'compare-grid' });
   grid.append(
     el('div', { class: 'compare-col compare-col--baseline' }, [
-      el('h4', { class: 'compare-col-title' }, [
+      el('h3', { class: 'compare-col-title' }, [
         el('span', { class: 'compare-col-icon scenario-status scenario-status--valid', text: '✓' }),
         document.createTextNode('Baseline'),
       ]),
       renderResultBlock(baseline.assertion, baseline.result, baseline.meta, true),
     ]),
     el('div', { class: 'compare-col compare-col--attack' }, [
-      el('h4', { class: 'compare-col-title' }, [
+      el('h3', { class: 'compare-col-title' }, [
         el('span', {
           class: `compare-col-icon scenario-status ${attack.result.ok ? 'scenario-status--valid' : 'scenario-status--invalid'}`,
           text: attack.result.ok ? '✓' : '✗',
@@ -787,7 +787,7 @@ async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonEle
     );
     if ('error' in assertionOrErr) {
       const refusedCol = el('div', { class: 'compare-col compare-col--attack' }, [
-        el('h4', { class: 'compare-col-title' }, [
+        el('h3', { class: 'compare-col-title' }, [
           el('span', { class: 'compare-col-icon scenario-status scenario-status--invalid', text: '✗' }),
           document.createTextNode('Wrong relying party'),
         ]),
@@ -803,7 +803,7 @@ async function runWrongRp(state: DemoState, out: HTMLElement, btn: HTMLButtonEle
       const grid = el('div', { class: 'compare-grid' });
       grid.append(
         el('div', { class: 'compare-col compare-col--baseline' }, [
-          el('h4', { class: 'compare-col-title' }, [
+          el('h3', { class: 'compare-col-title' }, [
             el('span', { class: 'compare-col-icon scenario-status scenario-status--valid', text: '✓' }),
             document.createTextNode('Baseline'),
           ]),

@@ -168,7 +168,7 @@ function renderLiveDemo(): HTMLElement {
     ]),
     el('p', {
       text:
-        'Everything above uses a simulated authenticator so the bytes are readable. This section calls the actual browser WebAuthn API. If your device has a passkey provider (Apple, Google, Windows Hello, a security key), you can register a credential and authenticate against it for real — and see the actual AAGUID, BE/BS flags, and transports the browser reports.',
+        'Everything above uses a simulated authenticator so the bytes are readable. This section calls the actual browser WebAuthn API. If your device has a passkey provider (Apple, Google, Windows Hello, a security key), you can register a credential and authenticate against it for real, and see the BE/BS flags and transports the browser reports. The same relying-party checks the simulator runs — ceremony type, challenge, origin, RP ID hash, signature, and UP — are re-run here on the real response, and each one is printed with its own pass/fail. Because the demo requests attestation: \'none\', the AAGUID comes back as all zeros: the client withholds the authenticator model, and the panel says so rather than inventing one.',
     }),
     el('div', { class: 'panel-card', id: 'live-demo-host' }, [
       el('p', { class: 'mono', text: 'Loading the live-demo module…' }),

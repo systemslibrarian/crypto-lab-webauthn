@@ -175,7 +175,7 @@ export const PRODUCTION_GAPS: ProductionGap[] = [
     what:
       'Each authenticator family ships with a 128-bit Authenticator Attestation GUID — for example, distinguishing a YubiKey 5 NFC from Windows Hello. RPs that enforce hardware policies (e.g., FIDO-certified only) gate on AAGUID.',
     why:
-      'AAGUID lives inside the attestation statement, which lives inside the CBOR-encoded attestationObject. Requires the same parsing this simulator skips.',
+      'The AAGUID is not in the attestation statement — it sits in the attested credential data inside authData (W3C WebAuthn §6.5.1), which is why the live section at the bottom of this page can read it after decoding the CBOR attestationObject, while the JSON simulator above cannot. Note also that this page requests attestation: \'none\', under which the client zeroes the AAGUID; identifying the model needs an attestation conveyance the demo does not request.',
     doRealLibraries:
       'The FIDO Metadata Service (MDS3) maps AAGUIDs → vendor / model / certification level.',
   },

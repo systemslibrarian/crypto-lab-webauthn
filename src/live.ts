@@ -32,6 +32,20 @@ export interface LiveRegistration {
   signCount: number;
   clientDataJSON: string;
   authDataLen: number;
+  /** The RP ID this credential was created for — re-checked at assertion time. */
+  rpId: string;
+  /** SHA-256(rpId), captured at registration so the assertion can be checked against it. */
+  rpIdHash: Uint8Array;
+  /** Registration checks, run against clientDataJSON the same way an RP server would. */
+  checks: LiveCheck[];
+  /** Highest signature counter seen so far; updated after each accepted assertion. */
+  lastSignCount: number;
+}
+
+export interface LiveCheck {
+  label: string;
+  pass: boolean;
+  detail: string;
 }
 
 export interface LiveAssertion {
@@ -42,7 +56,9 @@ export interface LiveAssertion {
   clientDataJSON: string;
   flags: AuthFlags;
   signCount: number;
+  /** True only when EVERY check in `checks` passed — not the signature alone. */
   verified: boolean;
+  checks: LiveCheck[];
   signedBytesPreview: string;
 }
 
@@ -201,6 +217,83 @@ function bytesToUuid(b: Uint8Array): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
+}
+
+// =====================================================================
+// The relying-party checks from the simulator above, run against the REAL
+// browser response. The simulated section teaches five checks (challenge,
+// origin, RP ID hash, signature, counter); if this section only verified the
+// signature, its "Verified" badge would be claiming four checks it never ran.
+// So it runs them here, on the real bytes, and the badge is the AND of them.
+//
+// §7.1 (registration) and §7.2 (authentication) of the W3C WebAuthn spec list
+// more steps than these — notably token-binding, extension-output, and
+// attestation-trust validation. Those are called out in the note the UI prints;
+// what is here is every check that is meaningful for a demo with no server and
+// `attestation: 'none'`.
+// =====================================================================
+interface ClientData {
+  type?: string;
+  challenge?: string;
+  origin?: string;
+  crossOrigin?: boolean;
+}
+
+function checkClientData(
+  clientDataJSON: string,
+  expectedType: string,
+  expectedChallengeB64Url: string,
+  expectedOrigin: string,
+): LiveCheck[] {
+  const checks: LiveCheck[] = [];
+  let client: ClientData;
+  try {
+    client = JSON.parse(clientDataJSON) as ClientData;
+  } catch {
+    return [
+      { label: 'clientDataJSON parses', pass: false, detail: 'clientDataJSON was not valid JSON.' },
+    ];
+  }
+
+  const typeOk = client.type === expectedType;
+  checks.push({
+    label: 'Ceremony type',
+    pass: typeOk,
+    detail: typeOk
+      ? `type is "${expectedType}", so a registration response cannot be replayed as a login.`
+      : `type is "${String(client.type)}", expected "${expectedType}".`,
+  });
+
+  const challengeOk = client.challenge === expectedChallengeB64Url;
+  checks.push({
+    label: 'Challenge match',
+    pass: challengeOk,
+    detail: challengeOk
+      ? 'The signed challenge is byte-for-byte the random one this page just generated.'
+      : 'The signed challenge is not the one this page issued — a replay would land here.',
+  });
+
+  const originOk = client.origin === expectedOrigin;
+  checks.push({
+    label: 'Origin match',
+    pass: originOk,
+    detail: originOk
+      ? `Origin ${String(client.origin)} matches this page's origin.`
+      : `Origin ${String(client.origin)} != expected ${expectedOrigin} — this is the check that blocks phishing.`,
+  });
+
+  return checks;
+}
+
 // =====================================================================
 // Public API
 // =====================================================================
@@ -267,6 +360,40 @@ export async function createLivePasskey(rpId: string, rpName: string): Promise<L
   const aaguid = bytesToUuid(parsed.aaguid);
   const aaguidIsZero = parsed.aaguid.every((b) => b === 0);
 
+  const clientDataJSON = new TextDecoder().decode(response.clientDataJSON);
+  const rpIdHash = await sha256(enc.encode(rpId));
+
+  // Run the registration-side checks (§7.1) that this demo can meaningfully
+  // run, so the panel reports something it actually computed.
+  const checks: LiveCheck[] = checkClientData(
+    clientDataJSON,
+    'webauthn.create',
+    b64urlEncode(challenge),
+    window.location.origin,
+  );
+  const rpHashOk = bytesEqual(parsed.rpIdHash, rpIdHash);
+  checks.push({
+    label: 'RP ID hash',
+    pass: rpHashOk,
+    detail: rpHashOk
+      ? `authData[0..32] equals SHA-256("${rpId}").`
+      : `authData[0..32] does not equal SHA-256("${rpId}").`,
+  });
+  checks.push({
+    label: 'User present (UP)',
+    pass: parsed.flags.up,
+    detail: parsed.flags.up
+      ? 'UP flag set — the authenticator confirms a user gesture.'
+      : 'UP flag NOT set; WebAuthn requires it on registration.',
+  });
+  checks.push({
+    label: 'Attested credential data (AT)',
+    pass: parsed.flags.at,
+    detail: parsed.flags.at
+      ? 'AT flag set — authData carries the AAGUID, credential ID, and COSE public key.'
+      : 'AT flag NOT set, so there is no public key to register.',
+  });
+
   return {
     credentialId: b64urlEncode(new Uint8Array(cred.rawId)),
     credentialIdRaw: cred.rawId,
@@ -277,8 +404,12 @@ export async function createLivePasskey(rpId: string, rpName: string): Promise<L
     publicKeyImported,
     flags: parsed.flags,
     signCount: parsed.signCount,
-    clientDataJSON: new TextDecoder().decode(response.clientDataJSON),
+    clientDataJSON,
     authDataLen: authDataBytes.byteLength,
+    rpId,
+    rpIdHash,
+    checks,
+    lastSignCount: parsed.signCount,
   };
 }
 
@@ -307,6 +438,7 @@ export async function getLiveAssertion(
 
   const authDataBytes = new Uint8Array(response.authenticatorData);
   const parsed = parseAuthData(authDataBytes);
+  const clientDataJSON = new TextDecoder().decode(response.clientDataJSON);
 
   // Verify the signature ourselves to prove the public key from registration
   // actually verifies the assertion the browser just produced.
@@ -316,18 +448,79 @@ export async function getLiveAssertion(
   signedBytes.set(new Uint8Array(clientDataHash), authDataBytes.byteLength);
 
   const sigDer = new Uint8Array(response.signature);
-  let verified = false;
+  let sigOk = false;
   try {
     const sigRaw = derToRaw(sigDer, 32);
-    verified = await crypto.subtle.verify(
+    sigOk = await crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
       registered.publicKeyImported,
       sigRaw as BufferSource,
       signedBytes as BufferSource,
     );
   } catch {
-    verified = false;
+    sigOk = false;
   }
+
+  // The same relying-party checks the simulator above runs, now on real bytes.
+  const checks: LiveCheck[] = checkClientData(
+    clientDataJSON,
+    'webauthn.get',
+    b64urlEncode(challenge),
+    window.location.origin,
+  );
+
+  const rpHashOk = bytesEqual(parsed.rpIdHash, registered.rpIdHash);
+  checks.push({
+    label: 'RP ID hash',
+    pass: rpHashOk,
+    detail: rpHashOk
+      ? `authData[0..32] equals SHA-256("${rpId}") — the same RP the credential was created for.`
+      : `authData[0..32] does not equal SHA-256("${rpId}").`,
+  });
+
+  checks.push({
+    label: 'Credential ID known',
+    pass: b64urlEncode(new Uint8Array(cred.rawId)) === registered.credentialId,
+    detail:
+      b64urlEncode(new Uint8Array(cred.rawId)) === registered.credentialId
+        ? 'The asserted credential is the one registered in this session.'
+        : 'The authenticator returned a different credential than the one registered.',
+  });
+
+  checks.push({
+    label: 'Signature valid',
+    pass: sigOk,
+    detail: sigOk
+      ? 'ECDSA P-256 signature over (authData ‖ SHA-256(clientDataJSON)) verifies against the registered public key.'
+      : 'Signature does NOT verify against the registered public key.',
+  });
+
+  checks.push({
+    label: 'User present (UP)',
+    pass: parsed.flags.up,
+    detail: parsed.flags.up
+      ? 'UP flag set — the authenticator confirms a user gesture.'
+      : 'UP flag NOT set; WebAuthn requires it for an assertion.',
+  });
+
+  // Counter check. The spec permits an authenticator to always report 0 (§6.1.1),
+  // and most synced passkey providers do exactly that. Reporting that as a
+  // failure would be a lie about the authenticator; reporting it as a pass would
+  // be a lie about the check. So it is reported as what it is: not exercised.
+  const counterUnsupported = parsed.signCount === 0 && registered.lastSignCount === 0;
+  const counterOk = counterUnsupported || parsed.signCount > registered.lastSignCount;
+  checks.push({
+    label: 'Counter increasing',
+    pass: counterOk,
+    detail: counterUnsupported
+      ? 'This authenticator reports signCount = 0 always, which the spec allows. Clone detection is therefore not available for this credential — it is not a check that passed, it is a check that cannot run.'
+      : counterOk
+        ? `Counter ${parsed.signCount} > ${registered.lastSignCount}.`
+        : `Counter ${parsed.signCount} <= ${registered.lastSignCount} — possible cloned authenticator.`,
+  });
+  if (!counterUnsupported && counterOk) registered.lastSignCount = parsed.signCount;
+
+  const verified = checks.every((c) => c.pass);
 
   let rawSigPreview = '';
   try {
@@ -341,19 +534,26 @@ export async function getLiveAssertion(
     signatureB64: b64Encode(sigDer),
     signatureRawB64: rawSigPreview,
     authDataLen: authDataBytes.byteLength,
-    clientDataJSON: new TextDecoder().decode(response.clientDataJSON),
+    clientDataJSON,
     flags: parsed.flags,
     signCount: parsed.signCount,
     verified,
+    checks,
     signedBytesPreview: b64Encode(signedBytes.slice(0, 48)) + (signedBytes.length > 48 ? '…' : ''),
   };
 }
 
-// Exposed for the engine self-test consistency check (signature seal property).
-export { coseToJwk as _coseToJwk, derToRaw as _derToRaw, decodeCbor as _decodeCbor, parseAuthData as _parseAuthData };
-
-// Suppress "unused" by virtue of exporting; the enc binding is for future use.
-void enc;
+// Exposed for the engine self-test consistency check (signature seal property)
+// and for the live-path verifier tests in test/live.test.ts.
+export {
+  coseToJwk as _coseToJwk,
+  derToRaw as _derToRaw,
+  decodeCbor as _decodeCbor,
+  parseAuthData as _parseAuthData,
+  checkClientData as _checkClientData,
+  bytesEqual as _bytesEqual,
+  b64urlEncode as _b64urlEncode,
+};
 
 // =====================================================================
 // UI mount (called from main.ts after the synthetic demo is in the DOM)
@@ -463,6 +663,31 @@ function flagChip(label: string, on: boolean): HTMLElement {
   return span;
 }
 
+function renderCheckList(checks: LiveCheck[], caption: string): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'live-checks';
+  const cap = document.createElement('p');
+  cap.className = 'signed-bytes-note';
+  cap.textContent = caption;
+  const ul = document.createElement('ul');
+  ul.className = 'live-check-list';
+  for (const c of checks) {
+    const li = document.createElement('li');
+    li.className = 'live-check ' + (c.pass ? 'live-check--pass' : 'live-check--fail');
+    const badge = document.createElement('span');
+    badge.className = 'live-flag ' + (c.pass ? 'live-flag--on' : 'live-flag--off');
+    badge.textContent = c.pass ? 'PASS' : 'FAIL';
+    const label = document.createElement('strong');
+    label.textContent = ` ${c.label}: `;
+    const detail = document.createElement('span');
+    detail.textContent = c.detail;
+    li.append(badge, label, detail);
+    ul.append(li);
+  }
+  wrap.append(cap, ul);
+  return wrap;
+}
+
 function renderFlagRow(flags: AuthFlags): HTMLElement {
   const row = document.createElement('div');
   row.className = 'live-flags';
@@ -500,10 +725,14 @@ function renderLiveRegistration(out: HTMLElement, r: LiveRegistration): void {
     Object.assign(document.createElement('p'), { className: 'signed-bytes-title', textContent: '' }),
     dl,
     renderFlagRow(r.flags),
+    renderCheckList(
+      r.checks,
+      'Registration checks, run here against the real response (W3C WebAuthn §7.1). The AAGUID above is read out of authData’s attested credential data, not out of the attestation statement.',
+    ),
     Object.assign(document.createElement('p'), {
       className: 'signed-bytes-note',
       textContent:
-        'These values come from the real browser response. AT must be 1 on registration (the public key is included). BE/BS indicate whether the passkey is syncable across devices.',
+        'These values come from the real browser response. AT must be 1 on registration (the public key is included). BE/BS indicate whether the passkey is syncable across devices. This demo requests attestation: \'none\', so it does not — and cannot — validate an attestation statement or the authenticator model.',
     }),
   );
   // Add an eyebrow title.
@@ -522,12 +751,13 @@ function renderLiveAssertion(out: HTMLElement, r: LiveRegistration, a: LiveAsser
   const badge = document.createElement('span');
   badge.className =
     'scenario-status ' + (a.verified ? 'scenario-status--valid' : 'scenario-status--invalid');
-  badge.textContent = a.verified ? 'Verified' : 'Signature failed';
+  const firstBad = a.checks.find((c) => !c.pass);
+  badge.textContent = a.verified ? 'Verified' : 'Rejected';
   const summary = document.createElement('span');
   summary.className = 'verify-summary';
   summary.textContent = a.verified
-    ? `ECDSA P-256 signature verified locally using the public key from registration (${r.publicKeyJwk.crv}).`
-    : 'Signature did NOT verify against the registered public key.';
+    ? `All ${a.checks.length} relying-party checks passed, including the ECDSA P-256 signature verified locally against the public key from registration (${r.publicKeyJwk.crv}).`
+    : `Rejected: ${firstBad?.detail ?? 'a check failed.'}`;
   status.append(badge, summary);
   out.append(status);
 
@@ -557,8 +787,14 @@ function renderLiveAssertion(out: HTMLElement, r: LiveRegistration, a: LiveAsser
   const note = document.createElement('p');
   note.className = 'signed-bytes-note';
   note.textContent =
-    'The browser returns the signature in ASN.1 DER. SubtleCrypto.verify expects raw r∥s, so the demo converts it. The verification step uses the public key extracted from registration — the same property the simulator demonstrates above, now on real bytes.';
-  wrap.append(eyebrowPara, dl, renderFlagRow(a.flags), note);
+    'The browser returns the signature in ASN.1 DER. SubtleCrypto.verify expects raw r∥s, so the demo converts it. The verification step uses the public key extracted from registration — the same property the simulator demonstrates above, now on real bytes. Not run here: token-binding, extension-output, and attestation-trust validation, which W3C WebAuthn §7.2 also lists.';
+  wrap.append(
+    eyebrowPara,
+    dl,
+    renderFlagRow(a.flags),
+    renderCheckList(a.checks, 'Every check behind the verdict above, each computed from the bytes the browser returned:'),
+    note,
+  );
   out.append(wrap);
 }
 

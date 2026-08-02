@@ -266,7 +266,7 @@ async function main() {
     assert('signCount chip > 0', chipCount > 0, `chip=${chipCount}`);
 
     // ---- Theme toggle ----
-    await page.click('#theme-toggle');
+    await page.click('#cl-theme-toggle');
     await wait(120);
     const themeAfter = await page.$eval('html', (h) => h.getAttribute('data-theme'));
     assert('theme toggled to light', themeAfter === 'light');

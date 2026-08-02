@@ -124,7 +124,7 @@
       t.addEventListener('click', function () {
         var next = cur() === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', next);
-        try { localStorage.setItem('theme', next); } catch (e) {}
+        try { localStorage.setItem('crypto-lab-theme', next); } catch (e) {}
         paint();
       });
     }

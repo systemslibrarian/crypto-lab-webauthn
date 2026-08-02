@@ -210,11 +210,11 @@ function renderHero(state: DemoState): HTMLElement {
 
   const main = el('div', { class: 'cl-hero-main' }, [
     el('h1', { class: 'cl-hero-title', text: 'WebAuthn' }),
-    el('p', { class: 'cl-hero-sub', text: 'Passkeys · ECDSA P-256 · FIDO2/WebAuthn' }),
+    el('p', { class: 'cl-hero-sub', text: 'Readable simulator first · real browser API below' }),
     el('p', {
       class: 'cl-hero-desc',
       text:
-        'Run a real WebAuthn ceremony with live ECDSA P-256 keys, then fire phishing, replay, and clone attacks and watch the origin-bound signature reject each one.',
+        'Start with an inspectable WebAuthn security-logic simulation using real ECDSA P-256 signatures but simplified JSON encoding, then fire phishing, replay, and clone attacks and watch the relevant relying-party check reject each one. The real navigator.credentials ceremony is a separate section below.',
     }),
     chip,
   ]);

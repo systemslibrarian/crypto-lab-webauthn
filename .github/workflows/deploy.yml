@@ -31,6 +31,12 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Accessibility gate (axe-core, WCAG A/AA)
         run: npm run test:a11y
+      # The virtual-authenticator suite is this repo's richest behavioural gate:
+      # 49 checks driving the real navigator.credentials ceremony through CDP.
+      # It was never wired in, so it only ran when someone remembered to — which
+      # is how a gate rots unnoticed, and why it was believed broken.
+      - name: WebAuthn ceremony gate (virtual authenticator)
+        run: npm run test:e2e
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

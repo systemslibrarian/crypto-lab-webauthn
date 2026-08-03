@@ -18,6 +18,7 @@
 //   * axe-core: zero critical or serious WCAG violations
 
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as wait } from 'node:timers/promises';
 import puppeteer from 'puppeteer';
 import { AxePuppeteer } from '@axe-core/puppeteer';
@@ -25,21 +26,71 @@ import { AxePuppeteer } from '@axe-core/puppeteer';
 const PORT = 4711;
 const BASE = `http://localhost:${PORT}/crypto-lab-webauthn/`;
 
+// Run vite's own entry script directly on this node binary rather than through
+// `npx`. `npx vite preview` is TWO processes — the npx/npm-exec wrapper and the
+// vite child — and `child.kill()` signals only the wrapper, which can orphan
+// vite still holding --strictPort's port. An orphan is worse than a crash: the
+// next run either collides on the port or silently passes against the stale
+// bundle the orphan is still serving. Spawning the script directly means there
+// is exactly one process and exactly one thing to kill.
+const VITE_BIN = fileURLToPath(new URL('../node_modules/vite/bin/vite.js', import.meta.url));
+
 function startPreview() {
-  const child = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
+  const child = spawn(process.execPath, [VITE_BIN, 'preview', '--port', String(PORT), '--strictPort'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: process.platform === 'win32',
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
   });
-  return new Promise((resolve) => {
-    let buf = '';
-    const onData = (d) => {
-      buf += d.toString();
-      if (buf.includes(String(PORT))) resolve(child);
-    };
-    child.stdout.on('data', onData);
-    child.stderr.on('data', onData);
-    setTimeout(() => resolve(child), 5000);
+  let output = '';
+  let exited = false;
+  child.stdout.on('data', (d) => { output += d.toString(); });
+  child.stderr.on('data', (d) => { output += d.toString(); });
+  child.on('exit', (code) => {
+    exited = true;
+    if (code !== 0 && code !== null) output += `\n[vite preview exited with code ${code}]`;
   });
+  return { child, getOutput: () => output, hasExited: () => exited };
+}
+
+function stopPreview(preview) {
+  try {
+    preview.child.kill('SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
+// Actively verify the server is serving the BUILT app before driving anything.
+// This replaces a blind `setTimeout(resolve, 5000)`, which resolved even when
+// vite had failed to bind or had not finished booting: the suite then drove a
+// dead or wrong port and every check failed with a low-level puppeteer error
+// naming whatever step it happened to reach, with nothing anywhere saying the
+// server was not up. Poll until the real markup arrives, then fail loudly and
+// specifically if it never does.
+async function waitForServer(url, preview, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = 'no request attempted';
+  while (Date.now() < deadline) {
+    // If vite already died (bad build, port taken under --strictPort) there is
+    // nothing to wait for — report now instead of burning the whole timeout.
+    if (preview.hasExited()) {
+      last = 'vite preview exited before it served anything';
+      break;
+    }
+    try {
+      const res = await fetch(url);
+      const body = await res.text();
+      if (res.ok && body.includes('id="app"')) return;
+      last = `HTTP ${res.status}, ${body.length} bytes, but not the built app`;
+    } catch (err) {
+      last = String(err?.cause?.code ?? err?.message ?? err);
+    }
+    await wait(250);
+  }
+  throw new Error(
+    `preview server never served ${url} (last: ${last}).\n` +
+    `Run \`npm run build\` first — this harness serves dist/, it does not build it.\n` +
+    `vite output:\n${preview.getOutput() || '(none)'}`,
+  );
 }
 
 const consoleErrors = [];
@@ -109,8 +160,13 @@ async function runAxe(page, contextLabel) {
 }
 
 async function main() {
-  const preview = await startPreview();
-  await wait(800);
+  const preview = startPreview();
+  try {
+    await waitForServer(BASE, preview);
+  } catch (err) {
+    stopPreview(preview);
+    throw err;
+  }
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -404,7 +460,7 @@ async function main() {
     assert('no unexpected console errors', consoleErrors.length === 0, consoleErrors.join(' | '));
   } finally {
     await browser.close();
-    preview.kill();
+    stopPreview(preview);
   }
 }
 

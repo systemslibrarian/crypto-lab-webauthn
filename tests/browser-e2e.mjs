@@ -22,7 +22,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import puppeteer from 'puppeteer';
 import { AxePuppeteer } from '@axe-core/puppeteer';
 
-const PORT = 4173;
+const PORT = 4711;
 const BASE = `http://localhost:${PORT}/crypto-lab-webauthn/`;
 
 function startPreview() {

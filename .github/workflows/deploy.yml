@@ -37,7 +37,7 @@ jobs:
       # is how a gate rots unnoticed, and why it was believed broken.
       - name: WebAuthn ceremony gate (virtual authenticator)
         run: npm run test:e2e
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 

@@ -24,6 +24,9 @@
 .verify-summary {
   font-size: 14px;
   color: var(--ink-strong);
+  /* Carries the rejection reason, which quotes whole origins:
+     "Origin https://examp1e-login.com != expected https://example.com". */
+  overflow-wrap: anywhere;
 }
 .verify-note {
   margin-top: 10px;
@@ -44,9 +47,19 @@
   flex-direction: column;
   gap: 6px;
 }
+/* `minmax(0, 1fr)`, not `1fr`. A bare `1fr` track takes an AUTO minimum, which
+   resolves to the min-content of whatever lands in it — and what lands in it
+   here is a check detail containing an unbreakable URL
+   ("https://examp1e-login.com" is 25 characters with no wrap opportunity). The
+   track then refuses to shrink below that word, the row refuses to shrink below
+   the track, and the whole compare grid pushed the document 183px wider than a
+   1280px viewport. `minmax(0, …)` restores a zero floor; `overflow-wrap:
+   anywhere` on the text itself (below) is the other half — without it the word
+   simply spills out of the narrowed track and pushes the document sideways
+   again. `break-word` would NOT do: it does not reduce intrinsic min-content. */
 .check-row {
   display: grid;
-  grid-template-columns: 70px 160px 1fr;
+  grid-template-columns: 70px 160px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -64,15 +77,17 @@
   font-family: var(--mono);
   font-size: 13px;
   color: var(--ink-strong);
+  overflow-wrap: anywhere;
 }
 .check-detail {
   font-size: 13px;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 640px) {
   .check-row {
-    grid-template-columns: 70px 1fr;
+    grid-template-columns: 70px minmax(0, 1fr);
   }
   .check-row .check-detail {
     grid-column: 1 / -1;
@@ -363,9 +378,11 @@
 /* =====================================================================
    Side-by-side compare (baseline ↔ attack)
    ===================================================================== */
+/* See the note on `.check-row`: a bare `1fr` takes a min-content minimum, and
+   the min-content of a compare column is a check row holding a full URL. */
 .compare-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
 }
 .compare-col {
@@ -395,8 +412,12 @@
   font-size: 12px;
   padding: 2px 8px;
 }
+/* Two class selectors, so this beats the one-class `@media (max-width: 640px)`
+   override above at every width — the compare columns keep three tracks on a
+   phone, and it is `.check-row .check-detail { grid-column: 1 / -1 }` in that
+   same media block that actually saves them there. */
 .compare-col .check-row {
-  grid-template-columns: 60px 130px 1fr;
+  grid-template-columns: 60px 130px minmax(0, 1fr);
   font-size: 13px;
 }
 .compare-col .signed-bytes {
@@ -404,7 +425,7 @@
 }
 @media (max-width: 760px) {
   .compare-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -420,8 +441,16 @@
 /* =====================================================================
    Production-gaps cards (Path A)
    ===================================================================== */
+/* `min(320px, 100%)`, not a bare `320px`. At a 380px viewport the section's
+   content box is 298px, so a hard 320px track laid the gap cards 22px outside
+   the panel they sit in — they escaped its border and background. It did not
+   trip the reflow oracle because `#app`'s own 16px padding absorbed the
+   overhang before it reached the document edge (measured: scrollWidth 380,
+   clientWidth 380), which is luck, not design. `min()` lets the track collapse
+   to the container at narrow widths and changes nothing at desktop, where it
+   still resolves to two 484px columns. */
 .reuse-grid--two-col {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
 }
 .gap-card {
   display: flex;

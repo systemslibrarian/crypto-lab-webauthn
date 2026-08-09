@@ -1,9 +1,17 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Playwright config for the strict axe-core WCAG gate.
- * Serves the built app via `vite preview` on a unique port and drives a single
- * Chromium project in the dark (default) theme; the spec also exercises light.
+ * Playwright config for the WCAG gate.
+ *
+ * `vite preview` serves `dist/`, so without a build in front of it the gate
+ * measures whatever bundle happened to be on disk — nothing on a clean
+ * checkout, and the previous build on a working tree. A gate that certifies a
+ * stale bundle is worse than no gate, so the webServer command builds first.
+ *
+ * Theme and viewport are deliberately NOT pinned in `use`. The spec runs four
+ * configurations — {dark, light} × {1280, 380} — from this one project, seeding
+ * each through `localStorage` and `setViewportSize` before the first paint;
+ * fixing either here would silently override one of them.
  */
 const PORT = 4333;
 const BASE = '/crypto-lab-webauthn/';
@@ -16,7 +24,6 @@ export default defineConfig({
   reporter: 'line',
   use: {
     baseURL: `http://localhost:${PORT}${BASE}`,
-    colorScheme: 'dark',
     trace: 'on-first-retry',
   },
   projects: [
@@ -26,9 +33,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run preview -- --port ${PORT} --strictPort`,
+    command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}${BASE}`,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 180_000,
   },
 });

@@ -691,6 +691,11 @@ function renderCheckList(checks: LiveCheck[], caption: string): HTMLElement {
 function renderFlagRow(flags: AuthFlags): HTMLElement {
   const row = document.createElement('div');
   row.className = 'live-flags';
+  // `aria-label` is prohibited on a role-less <div> and is silently discarded;
+  // `role="group"` is the generic labellable grouping role, so the name the
+  // markup intended actually reaches the accessibility tree. See the same fix
+  // on `.signed-bytes` in ui.ts.
+  row.setAttribute('role', 'group');
   row.setAttribute('aria-label', 'authData flags');
   row.append(
     flagChip('UP', flags.up),

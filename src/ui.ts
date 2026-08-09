@@ -280,11 +280,16 @@ function renderCeremonyDiagram(): HTMLElement {
     el('p', { class: 'ceremony-caption', text: 'The origin is part of the signed bytes — that is why a phishing site cannot forge a useful signature.' }),
   );
 
-  // Arrow with label
-  const arrow = el('div', { class: 'ceremony-arrow', 'aria-hidden': 'true' });
+  // Arrow with label. Only the ➜ glyph is decorative. The label names the one
+  // thing that crosses between the two actors, and it is the sole statement of
+  // that anywhere on the diagram — hiding the whole arrow left a screen-reader
+  // user with two cards and nothing between them. It also put the label inside
+  // an `aria-hidden` subtree, which BOTH contrast oracles skip, so its colour
+  // went unmeasured too.
+  const arrow = el('div', { class: 'ceremony-arrow' });
   arrow.append(
     el('span', { class: 'arrow-label', text: 'assertion (signature + signed bytes)' }),
-    el('span', { class: 'arrow-shape', text: '➜' }),
+    el('span', { class: 'arrow-shape', 'aria-hidden': 'true', text: '➜' }),
   );
 
   // Server card
@@ -587,7 +592,16 @@ function renderResultBlock(
 }
 
 function renderSignedBytesPanel(assertion: Assertion, expectedOrigin: string): HTMLElement {
-  const panel = el('div', { class: 'signed-bytes', 'aria-label': 'Real bytes the authenticator signed' });
+  // `aria-label` is PROHIBITED on a role-less <div> and is silently discarded,
+  // so this panel shipped with no accessible name at all — and axe files that
+  // under `incomplete` (aria-prohibited-attr), never under `violations`, which
+  // is why a gate asserting only on violations passed it. `role="group"` is the
+  // generic labellable grouping role and takes the name the markup intended.
+  const panel = el('div', {
+    class: 'signed-bytes',
+    role: 'group',
+    'aria-label': 'Real bytes the authenticator signed',
+  });
   panel.append(
     el('p', { class: 'signed-bytes-title' }, [
       el('span', { class: 'signed-bytes-eyebrow', text: 'What the authenticator actually signed' }),

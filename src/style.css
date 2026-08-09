@@ -121,7 +121,14 @@ body {
   z-index: 100;
   padding: 10px 16px;
   background: var(--accent);
-  color: #fff;
+  /* `color: #fff` here was 2.57:1 in the dark theme and no gate ever saw it.
+     `--accent` is a LIGHT lavender (#b58cff) in dark and a DARK violet
+     (#5b39c0) in light, so a fixed white foreground is only correct in one of
+     them — and the link only paints while focused, so first-paint scans never
+     reached it. This is the same pairing `button` two rules below already gets
+     right — `--bg` is the page ground, so it is dark exactly when `--accent` is
+     light. That gives 7.30:1 in dark and 6.72:1 in light. */
+  color: var(--bg);
   border-radius: var(--radius-sm);
   text-decoration: none;
   font-weight: 600;

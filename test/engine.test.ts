@@ -286,6 +286,38 @@ describe('counter check is independent of the signature check', () => {
     const r2 = await rp.verifyAssertion(equal, { expectedChallenge: c2, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
     expect(check(r2, 'Counter increasing').pass).toBe(false);
   });
+
+  // W3C WebAuthn §7.2 updates the stored counter as its LAST step, after every
+  // other check has passed. Advancing it from a rejected assertion is a
+  // denial-of-service on the legitimate user: one forged assertion carrying an
+  // inflated counter (the "Bump signCount in authData" button in the UI builds
+  // exactly that) would poison the server's stored value, and the real
+  // authenticator — still counting up from its true, much lower number — would
+  // be refused as a clone on every subsequent login.
+  it('a REJECTED assertion carrying a high counter does not poison the stored counter', async () => {
+    const { auth, rp, cred } = await freshCeremony();
+    const c1 = randomChallenge();
+    const a1 = await authenticate(auth, cred.credentialId, c1);
+    const r1 = await rp.verifyAssertion(a1, { expectedChallenge: c1, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(r1.ok).toBe(true);
+
+    // Forge an assertion whose SIGNED bytes claim 999. The signature no longer
+    // verifies, so the whole verification is rejected...
+    const parts = a1.authData.split('|');
+    const forged: Assertion = { ...a1, authData: `${parts[0]}|${parts[1]}|999`, signCount: 999 };
+    const rBad = await rp.verifyAssertion(forged, { expectedChallenge: c1, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(rBad.ok).toBe(false);
+    expect(check(rBad, 'Signature valid').pass).toBe(false);
+
+    // ...so the genuine authenticator's next assertion, at its real low count,
+    // must still be accepted.
+    const c2 = randomChallenge();
+    const a2 = await authenticate(auth, cred.credentialId, c2);
+    expect(a2.signCount).toBeLessThan(999);
+    const r2 = await rp.verifyAssertion(a2, { expectedChallenge: c2, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(check(r2, 'Counter increasing').pass).toBe(true);
+    expect(r2.ok).toBe(true);
+  });
 });
 
 // =========================================================================

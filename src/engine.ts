@@ -240,7 +240,6 @@ export class RelyingParty {
         const last = this.lastSeenCount.get(a.credentialId) ?? 0;
         const counterOk = a.signCount > last;
         checks.push({ label: 'Counter increasing', pass: counterOk, detail: counterOk ? `Counter ${a.signCount} > ${last}.` : `Counter ${a.signCount} <= ${last} — possible cloned authenticator.` });
-        if (counterOk) this.lastSeenCount.set(a.credentialId, a.signCount);
 
         // 6 (optional). User Present — RP policy
         if (ctx.requireUP) {
@@ -255,6 +254,25 @@ export class RelyingParty {
         }
 
         const ok = checks.every((c) => c.pass);
+
+        // Persist the counter ONLY when the whole verification succeeded.
+        //
+        // W3C WebAuthn §7.2 updates the stored signature counter as its final
+        // step, after every preceding check has passed. Advancing it from a
+        // rejected assertion is not a cosmetic difference: an attacker who can
+        // submit ONE forged assertion carrying an inflated counter — exactly
+        // what this page's "Bump signCount in authData" tamper button builds —
+        // would poison the server's stored value, and the genuine authenticator,
+        // still counting up from its real low number, would then be refused as a
+        // clone on every future login. A denial-of-service on the legitimate
+        // user, mounted with a signature that did not even verify.
+        //
+        // This lab drove straight into it: after the tamper section pushed 999
+        // through, the discoverable-credential section below could never log in
+        // again. The counter is a piece of relying-party state, and rejected
+        // input must not be allowed to write it.
+        if (ok && counterOk) this.lastSeenCount.set(a.credentialId, a.signCount);
+
         const firstBad = checks.find((c) => !c.pass);
         return { ok, checks, summary: ok ? 'Authenticated — all checks passed.' : `Rejected: ${firstBad?.detail}` };
     }

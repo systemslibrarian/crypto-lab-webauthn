@@ -462,13 +462,25 @@ export async function auditContrast(page: Page): Promise<ContrastFailure[]> {
       if ((el as HTMLElement).checkVisibility?.() === false) return false;
       const r = rectOf(el);
       if (r.width <= 0 || r.height <= 0) return false;
-      // Text parked off the left/top edge of the page paints no pixels. This is
+      // Text parked off the left/top edge of the PAGE paints no pixels. This is
       // the WCAG-sanctioned "visually hidden until focused" idiom, and this page
       // has TWO of them: the shared header's `.cl-skip-link` parks at
       // `top: -3rem` and the lab's own `.skip-link` at `top: -100px`. Measuring
       // a parked copy invents a failure for text that is not on screen; the
       // focused rendering is a real state and the gate scans both explicitly.
-      if (r.right <= 0 || r.bottom <= 0) return false;
+      //
+      // The test is in DOCUMENT space, not viewport space, and the difference is
+      // not academic. Written against the viewport — `r.bottom <= 0` — it also
+      // silently drops everything the page happens to be SCROLLED PAST, which is
+      // most of this document once the drive has clicked a control in the
+      // live-demo section at the bottom and Playwright has scrolled it into
+      // view. That cost real coverage in a sibling lab, where an SVG diagram's
+      // labels sat at 3.96:1 and went unreported for exactly this reason.
+      // Content above the fold is still painted; only content parked outside the
+      // document is not.
+      const docBottom = r.bottom + window.scrollY;
+      const docRight = r.right + window.scrollX;
+      if (docRight <= 0 || docBottom <= 0) return false;
       // Scrolled out of an `overflow: auto` container — clipped, not painted.
       if (clippedAway(el, r)) return false;
       return true;

@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { NARROW, WIDE, boot, driveAllStates } from './gate';
+import { NARROW, WIDE, boot, driveAllStates, expectBaselineNotStale } from './gate';
 
 /**
  * WCAG A/AA gate for the WebAuthn / passkeys lab.
@@ -25,6 +25,7 @@ for (const theme of ['dark', 'light'] as const) {
       test.setTimeout(300_000);
       await boot(page, theme, viewport);
       await driveAllStates(page, theme, size);
+      expectBaselineNotStale();
     });
   }
 }

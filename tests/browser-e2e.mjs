@@ -321,17 +321,10 @@ async function main() {
     const chipCount = await page.$eval('.sign-count-chip strong', (n) => Number(n.textContent));
     assert('signCount chip > 0', chipCount > 0, `chip=${chipCount}`);
 
-    // ---- Theme toggle ----
-    await page.click('#cl-theme-toggle');
-    await wait(120);
-    const themeAfter = await page.$eval('html', (h) => h.getAttribute('data-theme'));
-    assert('theme toggled to light', themeAfter === 'light');
+    // ---- Dark is the only theme, and it survives a reload ----
     await page.reload({ waitUntil: 'networkidle2' });
     const themePersisted = await page.$eval('html', (h) => h.getAttribute('data-theme'));
-    assert('theme persisted across reload', themePersisted === 'light');
-
-    // ---- axe scan: light theme ----
-    await runAxe(page, 'light theme');
+    assert('dark theme persists across reload', themePersisted === 'dark');
 
     // ---- Mobile viewport sanity ----
     await page.setViewport({ width: 375, height: 800 });

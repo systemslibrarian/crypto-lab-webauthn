@@ -16,7 +16,7 @@ import { NARROW, WIDE, boot, driveAllStates, expectBaselineNotStale } from './ga
  * check rows drop a track at 640px, and only at 380px do the tables actually
  * begin to scroll inside their wrappers.
  */
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['dark'] as const) {
   for (const [size, viewport] of [
     ['desktop 1280', WIDE],
     ['phone 380', NARROW],

@@ -12,14 +12,14 @@
     "test:a11y": "playwright test"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
+    "@axe-core/playwright": "^4.13.0",
     "@axe-core/puppeteer": "^4.12.1",
     "@playwright/test": "^1.62.1",
     "axe-core": "^4.12.0",
     "puppeteer": "^25.4.0",
     "typescript": "^5.4.5",
     "vite": "^8.2.0",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.10"
   },
   "allowScripts": {
     "puppeteer@25.8.0": true

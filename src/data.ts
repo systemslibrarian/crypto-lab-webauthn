@@ -37,7 +37,7 @@ export const CEREMONY_STEPS: CeremonyStep[] = [
     phase: 'Authentication',
     ordinal: 2,
     actor: 'Authenticator',
-    action: 'Signs (challenge ‖ origin ‖ rpIdHash ‖ signCount) with the private key. The private key never leaves.',
+    action: 'Signs (challenge ‖ origin ‖ rpIdHash ‖ flags ‖ signCount) with the private key. The server receives only the signature.',
   },
   {
     phase: 'Authentication',

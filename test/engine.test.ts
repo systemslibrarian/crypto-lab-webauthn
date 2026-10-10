@@ -196,20 +196,18 @@ describe('attacks bounce off the design', () => {
     if ('error' in res) expect(res.error).toMatch(/refuses|bound/i);
   });
 
-  it('CLONE / COUNTER: a lowered signCount fails the Counter check while the SIGNATURE still verifies', async () => {
+  it('CLONE / COUNTER: a genuinely signed stale count fails policy while the signature verifies', async () => {
     const { auth, rp, cred } = await freshCeremony();
     // Advance the server's last-seen counter with a legit assertion.
     const c1 = randomChallenge();
     const legit = await authenticate(auth, cred.credentialId, c1);
     await rp.verifyAssertion(legit, { expectedChallenge: c1, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
 
-    // A cloned authenticator lags behind: it presents a validly-signed assertion
-    // but with a stale (lower) counter. We model the clone the way the demo does:
-    // lower ONLY the a.signCount field the verifier reads, leaving authData (the
-    // signed bytes) intact — so the signature still verifies.
+    // An assumed copied simulator credential signs its OWN stale counter for a
+    // fresh challenge. This does not extract a real hardware/private passkey.
     const c2 = randomChallenge();
-    const good = await authenticate(auth, cred.credentialId, c2);
-    const cloned: Assertion = { ...good, signCount: 0 };
+    const clone = auth.cloneCredentialForTeaching(cred.credentialId);
+    const cloned = await authenticate(clone, cred.credentialId, c2);
 
     const result = await rp.verifyAssertion(cloned, {
       expectedChallenge: c2,
@@ -225,10 +223,10 @@ describe('attacks bounce off the design', () => {
 
 // =========================================================================
 // Counter-check independence, stated as its own dedicated property.
-// This is the subtle bit the original gaps called out: because authData is
-// signed, mutating the SIGNED counter breaks the signature, but the verifier
-// also reads a separate a.signCount field, and THAT is what the counter check
-// consumes. The two failures must be distinguishable.
+// Signed counter mutation breaks the signature. Unsigned display duplicates
+// cannot change the policy's authenticated counter and are rejected on mismatch.
+// A copied credential can genuinely sign a stale counter. Signature validity
+// and the policy rejecting that authenticated counter remain distinct checks.
 // =========================================================================
 describe('counter check is independent of the signature check', () => {
   it('mutating the SIGNED authData counter breaks the SIGNATURE (not just the counter)', async () => {
@@ -254,7 +252,7 @@ describe('counter check is independent of the signature check', () => {
     expect(check(result, 'Signature valid').pass).toBe(false);
   });
 
-  it('lowering ONLY the unsigned a.signCount field trips the counter but leaves the signature valid', async () => {
+  it('lowering unsigned counter metadata is rejected; the signed counter and signature remain intact', async () => {
     const { auth, rp, cred } = await freshCeremony();
     // Prime the server counter.
     const c1 = randomChallenge();
@@ -270,7 +268,10 @@ describe('counter check is independent of the signature check', () => {
       expectedRpId: RP_ID,
     });
     expect(check(result, 'Signature valid').pass).toBe(true);
-    expect(check(result, 'Counter increasing').pass).toBe(false);
+    expect(check(result, 'Counter increasing').pass).toBe(true);
+    expect(check(result, 'Authenticated metadata').pass).toBe(false);
+    expect(result.ok).toBe(false);
+    expect((await rp.verifyAssertion(a2, { expectedChallenge: c2, expectedOrigin: ORIGIN, expectedRpId: RP_ID })).ok).toBe(true);
   });
 
   it('an equal (non-increasing) counter is rejected — strict monotonicity', async () => {
@@ -281,8 +282,9 @@ describe('counter check is independent of the signature check', () => {
     expect(r1.ok).toBe(true);
 
     const c2 = randomChallenge();
-    const a2 = await authenticate(auth, cred.credentialId, c2);
-    const equal: Assertion = { ...a2, signCount: a1.signCount }; // equal, not >
+    const copy = auth.cloneCredentialForTeaching(cred.credentialId);
+    const equal = await authenticate(copy, cred.credentialId, c2); // genuinely signed equal count
+    expect(equal.signCount).toBe(a1.signCount);
     const r2 = await rp.verifyAssertion(equal, { expectedChallenge: c2, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
     expect(check(r2, 'Counter increasing').pass).toBe(false);
   });
@@ -498,5 +500,124 @@ describe('shortB64 helper', () => {
   it('truncates long strings and leaves short ones intact', () => {
     expect(shortB64('abc', 16)).toBe('abc');
     expect(shortB64('0123456789abcdefXYZ', 16)).toBe('0123456789abcdef…');
+  });
+});
+
+
+// New signed-data controls intentionally fail on the reported baseline.
+describe('signed simulator authData is authoritative', () => {
+  it.each([
+    ['UP', { userPresent: false }, { requireUP: true }],
+    ['UV', { userVerified: false }, { requireUV: true }],
+  ] as const)('unsigned flags cannot turn absent signed %s into a successful policy check', async (_name, options, policy) => {
+    const { auth, rp, cred } = await freshCeremony();
+    const challenge = randomChallenge();
+    const a = await authenticate(auth, cred.credentialId, challenge, ORIGIN, RP_ID, options);
+    const altered = { ...a, flags: AUTH_FLAG_UP | AUTH_FLAG_UV };
+    const r = await rp.verifyAssertion(altered, { expectedChallenge: challenge, expectedOrigin: ORIGIN, expectedRpId: RP_ID, ...policy });
+    expect(r.ok).toBe(false);
+    expect(check(r, 'Signature valid').pass).toBe(true);
+    expect(check(r, 'Authenticated metadata').pass).toBe(false);
+    expect(check(r, _name === 'UP' ? 'User present (UP)' : 'User verified (UV)').pass).toBe(false);
+  });
+
+  it('an inflated unsigned count is rejected without poisoning later signed counts', async () => {
+    const { auth, rp, cred } = await freshCeremony();
+    const c1 = randomChallenge();
+    const a1 = await authenticate(auth, cred.credentialId, c1);
+    const r1 = await rp.verifyAssertion({ ...a1, signCount: 999 }, { expectedChallenge: c1, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(r1.ok).toBe(false);
+    expect(check(r1, 'Signature valid').pass).toBe(true);
+    expect(check(r1, 'Counter increasing').pass).toBe(true); // signed count=1
+    expect(check(r1, 'Authenticated metadata').pass).toBe(false);
+    const c2 = randomChallenge();
+    const a2 = await authenticate(auth, cred.credentialId, c2);
+    expect((await rp.verifyAssertion(a2, { expectedChallenge: c2, expectedOrigin: ORIGIN, expectedRpId: RP_ID })).ok).toBe(true);
+  });
+
+  it.each([undefined, NaN, Infinity, -1, .5, '1', true])('invalid duplicate count %s cannot override signed data', async count => {
+    const { auth, rp, cred } = await freshCeremony();
+    const challenge = randomChallenge();
+    const a = await authenticate(auth, cred.credentialId, challenge);
+    const r = await rp.verifyAssertion({ ...a, signCount: count } as unknown as Assertion,
+      { expectedChallenge: challenge, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(r.ok).toBe(false);
+    expect(check(r, 'Authenticated metadata').pass).toBe(false);
+    expect(check(r, 'Signature valid').pass).toBe(true);
+  });
+
+  it.each([undefined, NaN, Infinity, -1, .5, '5', true])('invalid duplicate flags %s are rejected even without UP/UV policy', async flags => {
+    const { auth, rp, cred } = await freshCeremony();
+    const challenge = randomChallenge();
+    const a = await authenticate(auth, cred.credentialId, challenge);
+    const r = await rp.verifyAssertion({ ...a, flags } as unknown as Assertion,
+      { expectedChallenge: challenge, expectedOrigin: ORIGIN, expectedRpId: RP_ID });
+    expect(r.ok).toBe(false);
+    expect(check(r, 'Authenticated metadata').pass).toBe(false);
+    expect(check(r, 'Signature valid').pass).toBe(true);
+  });
+});
+
+// Independent signing fixture: malformed signed encodings are not valid evidence
+// merely because their ECDSA signature is valid.
+async function signedEncoding(tail: string, count = 1, flags = 5) {
+  const rp = new RelyingParty();
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const cred = { credentialId: 'encoding-fixture', rpId: RP_ID, publicKeyJwk: await crypto.subtle.exportKey('jwk', kp.publicKey), signCount: 0 };
+  rp.register(cred);
+  const challenge = randomChallenge();
+  const clientDataJSON = JSON.stringify({ type: 'webauthn.get', challenge, origin: ORIGIN });
+  const hexHash = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))).map(b => b.toString(16).padStart(2, '0')).join('');
+  const authData = `${await hexHash(RP_ID)}|${tail}`;
+  const signed = new TextEncoder().encode(`${authData}|${await hexHash(clientDataJSON)}`);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, signed));
+  return { rp, assertion: { credentialId: cred.credentialId, authData, clientDataJSON, flags, signCount: count,
+    signatureB64: btoa(String.fromCharCode(...sig)) }, context: { expectedChallenge: challenge, expectedOrigin: ORIGIN, expectedRpId: RP_ID } };
+}
+
+describe('signed encoding bounds', () => {
+  it.each(['5|1|trailer', '|1', '5', 'x|1', '-1|1', '256|1', '5|', '5|-1', '5|.5', '5|00', '5|1e0', '5|4294967296', '5|Infinity'])('signed malformed authData %s is rejected explicitly', async tail => {
+    const f = await signedEncoding(tail);
+    const r = await f.rp.verifyAssertion(f.assertion, f.context);
+    expect(r.ok).toBe(false);
+    expect(check(r, 'authData decodes').pass).toBe(false);
+  });
+
+  it('a genuine signed zero cannot be upgraded by an unsigned count', async () => {
+    const f = await signedEncoding('5|0', 1);
+    const r = await f.rp.verifyAssertion(f.assertion, f.context);
+    expect(r.ok).toBe(false);
+    expect(check(r, 'Counter increasing').pass).toBe(false);
+    expect(check(r, 'Signature valid').pass).toBe(true);
+  });
+
+  it('canonical uint32 maximum is valid but a repeated equal signed counter is stale', async () => {
+    const f = await signedEncoding('5|4294967295', 4294967295);
+    expect((await f.rp.verifyAssertion(f.assertion, f.context)).ok).toBe(true);
+    expect((await f.rp.verifyAssertion(f.assertion, f.context)).ok).toBe(false);
+  });
+});
+
+
+describe('assumed credential-copy teaching control', () => {
+  it('copy counter state is isolated and cannot request another relying party', async () => {
+    const { auth, cred } = await freshCeremony();
+    await authenticate(auth, cred.credentialId, randomChallenge());
+    const original = auth.peekCount(cred.credentialId);
+    const copy = auth.cloneCredentialForTeaching(cred.credentialId);
+    const a = await authenticate(copy, cred.credentialId, randomChallenge());
+    expect(a.signCount).toBe(1);
+    expect(a.authData.split('|')[2]).toBe('1');
+    expect(auth.peekCount(cred.credentialId)).toBe(original);
+    expect(await copy.getAssertion(cred.credentialId, randomChallenge(), ORIGIN, 'other.example')).toHaveProperty('error');
+    expect(() => auth.cloneCredentialForTeaching('missing')).toThrow();
+  });
+
+  it('before any accepted counter history, a copy cannot be identified from a valid fresh assertion', async () => {
+    const { auth, rp, cred } = await freshCeremony();
+    const copy = auth.cloneCredentialForTeaching(cred.credentialId);
+    const challenge = randomChallenge();
+    const a = await authenticate(copy, cred.credentialId, challenge);
+    expect((await rp.verifyAssertion(a, { expectedChallenge: challenge, expectedOrigin: ORIGIN, expectedRpId: RP_ID })).ok).toBe(true);
   });
 });

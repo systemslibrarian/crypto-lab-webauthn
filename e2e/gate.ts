@@ -547,7 +547,7 @@ export async function driveAllStates(page: Page, theme: string, size: string): P
     ['Phishing site', 'examp1e-login.com'],
     ['Replay assertion', 'replayed against a brand-new challenge'],
     ['Wrong relying party', 'Refused by authenticator'],
-    ['Cloned authenticator', 'clone detection'],
+    ['Cloned authenticator', 'genuinely signs that stale count in authData'],
   ] as const) {
     await page.locator('#break-it').getByRole('button', { name: button }).click();
     await expect(page.locator('#attack-out .compare-grid')).toBeVisible();

@@ -248,7 +248,7 @@ function renderCeremonyDiagram(): HTMLElement {
     ]),
     el('p', {
       text:
-        'The authenticator holds a private key that never leaves. To log in, it signs a packet of bytes that includes the origin the browser actually saw. The server, holding only the matching public key, verifies the signature and re-checks every field. Change anything about those bytes — origin, counter, challenge — and the signature stops verifying. That is the entire anti-phishing property.',
+        'The authenticator holds the private key; the server holds only its public counterpart. To log in, it signs a packet of bytes that includes the origin the browser actually saw. The server, holding only the matching public key, verifies the signature and re-checks every field. Change anything about those bytes — origin, counter, challenge — and the signature stops verifying. That is the entire anti-phishing property.',
     }),
   );
 
@@ -265,7 +265,7 @@ function renderCeremonyDiagram(): HTMLElement {
       el('span', { class: 'ceremony-actor-icon', 'aria-hidden': 'true', text: '🔐' }),
       el('h3', { text: 'Authenticator' }),
     ]),
-    el('p', { class: 'ceremony-secret', text: 'private key — never leaves the device' }),
+    el('p', { class: 'ceremony-secret', text: 'private key — held by the authenticator' }),
     el('p', { class: 'ceremony-action mono' }, [
       document.createTextNode('sign('),
       el('span', { class: 'signed-field', text: 'challenge' }),
@@ -273,6 +273,8 @@ function renderCeremonyDiagram(): HTMLElement {
       el('span', { class: 'signed-field highlight-origin', text: 'origin' }),
       document.createTextNode(' ‖ '),
       el('span', { class: 'signed-field', text: 'rpIdHash' }),
+      document.createTextNode(' ‖ '),
+      el('span', { class: 'signed-field', text: 'flags' }),
       document.createTextNode(' ‖ '),
       el('span', { class: 'signed-field', text: 'signCount' }),
       document.createTextNode(')'),
@@ -327,7 +329,7 @@ function renderRegister(state: DemoState): HTMLElement {
     ]),
     el('p', {
       text:
-        'The authenticator generates a fresh ECDSA P-256 keypair bound to the relying party (example.com). It returns the public key — that is all the server keeps. The private key never leaves the authenticator.',
+        'The authenticator generates a fresh ECDSA P-256 keypair bound to the relying party (example.com). It returns the public key — that is all the server keeps. The server receives no private key; the clone teaching control separately assumes a copied credential.',
     }),
   );
 
@@ -425,7 +427,7 @@ function renderLogin(state: DemoState): HTMLElement {
     ]),
     el('p', {
       text:
-        'The server issues a fresh challenge. The authenticator signs (challenge ‖ origin ‖ rpIdHash ‖ counter) with the private key. The server verifies the signature with the stored public key and checks every contextual field.',
+        'The server issues a fresh challenge. The authenticator signs (challenge ‖ origin ‖ rpIdHash ‖ flags ‖ counter) with the private key. The server verifies the signature with the stored public key and checks every contextual field.',
     }),
   );
 
@@ -624,8 +626,8 @@ function renderSignedBytesPanel(assertion: Assertion, expectedOrigin: string): H
     clientDataDd.textContent = assertion.clientDataJSON;
   }
 
-  const authDataDt = el('dt', { text: 'authData (rpIdHash | signCount)' });
-  const authDataDd = el('dd', { class: 'mono', text: shortB64(assertion.authData, 60) });
+  const authDataDt = el('dt', { text: 'authData (rpIdHash | flags | signCount)' });
+  const authDataDd = el('dd', { class: 'mono', text: assertion.authData });
 
   const sigDt = el('dt', { text: 'ECDSA signature (base64, truncated)' });
   const sigDd = el('dd', { class: 'mono', text: shortB64(assertion.signatureB64, 60) });
@@ -848,7 +850,8 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
   if (!baseline) return;
   await withBusy(out, btn, async () => {
     const challenge = randomChallenge();
-    const assertionOrErr = await state.auth.getAssertion(
+    const clone = state.auth.cloneCredentialForTeaching(state.credential!.credentialId);
+    const assertionOrErr = await clone.getAssertion(
       state.credential!.credentialId,
       challenge,
       ORIGIN_REAL,
@@ -858,13 +861,13 @@ async function runClone(state: DemoState, out: HTMLElement, btn: HTMLButtonEleme
       renderChecksError(out, assertionOrErr.error);
       return;
     }
-    const cloned: Assertion = { ...assertionOrErr, signCount: 0 };
+    const cloned = assertionOrErr;
     const meta: VerifyMeta = {
       challenge,
       origin: ORIGIN_REAL,
       rpId: RP_ID,
       label: 'Cloned authenticator',
-      note: 'A clone of the authenticator would lag behind on the monotonic counter. The server sees signCount go backwards and flags it — clone detection.',
+      note: 'Assume a copy already possesses this simulator credential private key but has a stale counter. It genuinely signs that stale count in authData for a fresh challenge; the signature is valid, while the signed counter is not increasing. This models the copied-key premise, not extraction of a hardware passkey or proof that every clone is detectable.',
     };
     const result = await state.rp.verifyAssertion(cloned, {
       expectedChallenge: meta.challenge,

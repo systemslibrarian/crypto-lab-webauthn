@@ -58,7 +58,9 @@ The security-critical engine has a fast, isolated unit suite (`test/engine.test.
 
 A second suite (`test/live.test.ts`) covers the real-WebAuthn path in `src/live.ts` without needing an authenticator attached, by constructing the wire bytes directly: `authData` is built to the §6.1 layout and parsed back, asserting the rpIdHash, the big-endian `signCount`, each flag bit position (UP=0, UV=2, BE=3, BS=4, AT=6, ED=7), and that the AAGUID is read out of *attested credential data* rather than an attestation statement; the DER→raw conversion is asserted to left-pad short integers and strip DER's high-bit sign byte; COSE→JWK is asserted to refuse a non-EC2 key rather than emit a bogus one; and each relying-party check is falsified one at a time — a stale challenge, a look-alike origin, and a `webauthn.create` response replayed as a login each trip *exactly* the corresponding row and leave the others passing.
 
-The build (`npm run build`), a WCAG A/AA accessibility gate (`npm run test:a11y`, axe-core, both themes), and a real-browser end-to-end walkthrough (`npm run test:e2e`) round out the checks.
+The live suite also calls the actual `getLiveAssertion()` orchestrator through a controlled credential-provider stub with genuinely signed ECDSA wire bytes. Rejected challenge/origin/type/RP-hash/credential-ID/signature/UP or malformed-client-data checks leave the stored counter unchanged, so a rejected high count cannot poison a later valid assertion. Equal/decreasing counts stay rejected, all-zero unsupported counters remain explicitly unavailable for clone detection, and truncated/cancelled/null responses preserve state. Counter persistence happens only after complete acceptance, following [WebAuthn assertion verification state-update ordering](https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion). These are reproducible fixtures, not hardware/passkey-ceremony or attestation-trust verification.
+
+The build (`npm run build`), a WCAG A/AA accessibility gate (`npm run test:a11y`, axe-core, configured dark desktop/380px states), and a real-browser end-to-end walkthrough (`npm run test:e2e`) round out the checks.
 
 ## Related Demos
 

@@ -518,9 +518,10 @@ export async function getLiveAssertion(
         ? `Counter ${parsed.signCount} > ${registered.lastSignCount}.`
         : `Counter ${parsed.signCount} <= ${registered.lastSignCount} — possible cloned authenticator.`,
   });
-  if (!counterUnsupported && counterOk) registered.lastSignCount = parsed.signCount;
-
   const verified = checks.every((c) => c.pass);
+  // Persist only after complete acceptance: rejected assertions must not poison
+  // the counter used to evaluate later valid assertions (§7.2 state updates).
+  if (verified && !counterUnsupported && counterOk) registered.lastSignCount = parsed.signCount;
 
   let rawSigPreview = '';
   try {

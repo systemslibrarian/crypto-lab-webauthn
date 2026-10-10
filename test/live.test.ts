@@ -8,8 +8,10 @@
 // Test vectors are built here rather than captured from a device so the
 // assertions are reproducible without an authenticator attached.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+  getLiveAssertion,
+  type LiveRegistration,
   _checkClientData as checkClientData,
   _parseAuthData as parseAuthData,
   _decodeCbor as decodeCbor,
@@ -206,5 +208,121 @@ describe('CBOR decoder', () => {
 
   it('decodes CBOR negative integers (COSE alg -7 / label -2)', () => {
     expect(decodeCbor(new Uint8Array([0x26])).value).toBe(-7);
+  });
+});
+
+
+// Exercise the actual live assertion orchestrator with signed wire bytes and
+// a controlled credential provider. No hardware or browser ceremony is claimed.
+afterEach(() => vi.unstubAllGlobals());
+
+function rawToDer(raw: Uint8Array): Uint8Array {
+  const integer = (bytes: Uint8Array) => {
+    let start = 0;
+    while (start < bytes.length - 1 && bytes[start] === 0) start++;
+    const value = bytes.slice(start);
+    const positive = value[0] & 0x80 ? new Uint8Array([0, ...value]) : value;
+    return new Uint8Array([2, positive.length, ...positive]);
+  };
+  const r = integer(raw.slice(0, 32)), s = integer(raw.slice(32));
+  return new Uint8Array([0x30, r.length + s.length, ...r, ...s]);
+}
+
+type LiveFault = 'challenge' | 'origin' | 'type' | 'rpHash' | 'credentialId' | 'signature' | 'up' | 'json' | 'truncated' | 'cancelled' | 'null';
+async function liveFixture(last = 1, initial: { count?: number; fault?: LiveFault } = {}) {
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const rpIdHash = await sha256(new TextEncoder().encode(RP_ID));
+  const id = new Uint8Array([9, 8, 7, 6]);
+  const registered: LiveRegistration = {
+    credentialId: b64urlEncode(id), credentialIdRaw: id.buffer,
+    aaguid: '00000000-0000-0000-0000-000000000000', aaguidIsZero: true,
+    transports: [], publicKeyJwk: await crypto.subtle.exportKey('jwk', kp.publicKey),
+    publicKeyImported: kp.publicKey,
+    flags: { up: true, uv: false, be: false, bs: false, at: true, ed: false },
+    signCount: last, lastSignCount: last, clientDataJSON: '{}', authDataLen: 37,
+    rpId: RP_ID, rpIdHash, checks: [],
+  };
+  let current = initial;
+  vi.stubGlobal('window', { location: { origin: ORIGIN }, PublicKeyCredential: class {} });
+  vi.stubGlobal('navigator', { credentials: { get: async (options: CredentialRequestOptions) => {
+    if (current.fault === 'cancelled') throw new Error('provider cancelled');
+    if (current.fault === 'null') return null;
+    const fault = current.fault;
+    const requested = new Uint8Array(options.publicKey!.challenge as ArrayBuffer);
+    const cdata = new TextEncoder().encode(fault === 'json' ? '{not json' : clientData({
+      challenge: b64urlEncode(fault === 'challenge' ? new Uint8Array([0]) : requested),
+      origin: fault === 'origin' ? 'https://wrong.example' : ORIGIN,
+      type: fault === 'type' ? 'webauthn.create' : 'webauthn.get',
+    }));
+    const authData = buildAuthData({
+      rpIdHash: fault === 'rpHash' ? new Uint8Array(32) : rpIdHash,
+      flags: fault === 'up' ? 0 : 1, signCount: current.count ?? last + 1,
+    });
+    const hash = await sha256(cdata);
+    const signed = new Uint8Array([...authData, ...hash]);
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, signed));
+    if (fault === 'signature') sig[0] ^= 1;
+    return {
+      rawId: (fault === 'credentialId' ? new Uint8Array([1, 2, 3]) : id).buffer,
+      response: { clientDataJSON: cdata.buffer,
+        authenticatorData: (fault === 'truncated' ? authData.slice(0, 2) : authData).buffer,
+        signature: rawToDer(sig).buffer },
+    };
+  } } });
+  return { registered, set: (value: typeof initial) => { current = value; } };
+}
+
+describe('live assertion acceptance and counter state', () => {
+  it('accepted signed wire assertion advances the persisted counter', async () => {
+    const { registered } = await liveFixture();
+    const r = await getLiveAssertion(registered, RP_ID);
+    expect(r.verified).toBe(true);
+    expect(r.checks.every(c => c.pass)).toBe(true);
+    expect(registered.lastSignCount).toBe(2);
+  });
+
+  it.each([
+    ['challenge', 'Challenge match'], ['origin', 'Origin match'], ['type', 'Ceremony type'],
+    ['rpHash', 'RP ID hash'], ['credentialId', 'Credential ID known'],
+    ['signature', 'Signature valid'], ['up', 'User present (UP)'], ['json', 'Client data parsed'],
+  ] as const)('rejected %s assertion cannot advance an otherwise-increasing counter', async (fault, label) => {
+    const { registered } = await liveFixture(1, { fault, count: 100 });
+    const r = await getLiveAssertion(registered, RP_ID);
+    expect(r.verified).toBe(false);
+    expect(r.checks.some(c => !c.pass)).toBe(true);
+    if (fault !== 'json') expect(pass(r.checks, label)).toBe(false);
+    expect(pass(r.checks, 'Counter increasing')).toBe(true);
+    if (fault !== 'signature') expect(pass(r.checks, 'Signature valid')).toBe(true);
+    expect(registered.lastSignCount).toBe(1);
+  });
+
+  it('a rejected high counter cannot poison a later valid lower assertion', async () => {
+    const fixture = await liveFixture(1, { fault: 'origin', count: 100 });
+    expect((await getLiveAssertion(fixture.registered, RP_ID)).verified).toBe(false);
+    fixture.set({ count: 2 });
+    expect((await getLiveAssertion(fixture.registered, RP_ID)).verified).toBe(true);
+    expect(fixture.registered.lastSignCount).toBe(2);
+  });
+
+  it.each([0, 1, 3])('equal/decreasing counter %s does not change accepted state', async count => {
+    const { registered } = await liveFixture(3, { count });
+    const r = await getLiveAssertion(registered, RP_ID);
+    expect(r.verified).toBe(false);
+    expect(pass(r.checks, 'Counter increasing')).toBe(false);
+    expect(registered.lastSignCount).toBe(3);
+  });
+
+  it('all-zero unsupported counters remain accepted without claiming clone detection', async () => {
+    const { registered } = await liveFixture(0, { count: 0 });
+    const r = await getLiveAssertion(registered, RP_ID);
+    expect(r.verified).toBe(true);
+    expect(registered.lastSignCount).toBe(0);
+    expect(r.checks.find(c => c.label === 'Counter increasing')?.detail).toContain('cannot run');
+  });
+
+  it.each(['truncated', 'cancelled', 'null'] as const)('unreadable/unfinished %s response leaves state unchanged', async fault => {
+    const { registered } = await liveFixture(1, { fault, count: 100 });
+    await expect(getLiveAssertion(registered, RP_ID)).rejects.toThrow();
+    expect(registered.lastSignCount).toBe(1);
   });
 });

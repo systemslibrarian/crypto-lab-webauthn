@@ -75,3 +75,7 @@ The build (`npm run build`), a WCAG A/AA accessibility gate (`npm run test:a11y`
 *Part of the [Crypto Lab](https://crypto-lab.systemslibrarian.dev/) suite.*
 
 *"So whether you eat or drink or whatever you do, do it all for the glory of God." — 1 Corinthians 10:31*
+
+## WebAuthn Level 3 backup-state consistency
+
+The real-response path checks the allowed BE/BS combinations during registration and assertion verification, following the [25 August 2026 W3C Recommendation](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/) (§7.1 step 17, §7.2 step 18). BE=0/BS=1 is rejected even when the assertion’s ECDSA signature verifies. Rejected responses do not replace an accepted credential or advance its counter/backup state. BE=1 permits legitimate BS transitions; this demo does not apply a backup-based business policy or infer an assurance level from these flags. It remains a teaching verifier without attestation validation.

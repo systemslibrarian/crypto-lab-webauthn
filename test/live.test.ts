@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   getLiveAssertion,
+  createLivePasskey,
   type LiveRegistration,
   _checkClientData as checkClientData,
   _parseAuthData as parseAuthData,
@@ -229,7 +230,7 @@ function rawToDer(raw: Uint8Array): Uint8Array {
 }
 
 type LiveFault = 'challenge' | 'origin' | 'type' | 'rpHash' | 'credentialId' | 'signature' | 'up' | 'json' | 'truncated' | 'cancelled' | 'null';
-async function liveFixture(last = 1, initial: { count?: number; fault?: LiveFault } = {}) {
+async function liveFixture(last = 1, initial: { count?: number; fault?: LiveFault; flags?: number } = {}) {
   const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   const rpIdHash = await sha256(new TextEncoder().encode(RP_ID));
   const id = new Uint8Array([9, 8, 7, 6]);
@@ -256,7 +257,7 @@ async function liveFixture(last = 1, initial: { count?: number; fault?: LiveFaul
     }));
     const authData = buildAuthData({
       rpIdHash: fault === 'rpHash' ? new Uint8Array(32) : rpIdHash,
-      flags: fault === 'up' ? 0 : 1, signCount: current.count ?? last + 1,
+      flags: current.flags ?? (fault === 'up' ? 0 : 1), signCount: current.count ?? last + 1,
     });
     const hash = await sha256(cdata);
     const signed = new Uint8Array([...authData, ...hash]);
@@ -324,5 +325,60 @@ describe('live assertion acceptance and counter state', () => {
     const { registered } = await liveFixture(1, { fault, count: 100 });
     await expect(getLiveAssertion(registered, RP_ID)).rejects.toThrow();
     expect(registered.lastSignCount).toBe(1);
+  });
+});
+
+
+describe('Level 3 backup flags on genuinely signed assertions', () => {
+  it.each([0x01, 0x09, 0x19])('accepts allowed flag byte %i', async flags => {
+    const { registered } = await liveFixture(0, { flags, count: 0 });
+    const result = await getLiveAssertion(registered, RP_ID);
+    expect(result.verified).toBe(true);
+    expect(pass(result.checks, 'Backup flags valid (BE/BS)')).toBe(true);
+    expect(registered.lastBackupFlags).toEqual({ be: !!(flags & 8), bs: !!(flags & 16) });
+  });
+  it('rejects signed BE=0/BS=1 without changing accepted counter or backup state', async () => {
+    const fixture = await liveFixture(1, { flags: 0x09, count: 2 });
+    expect((await getLiveAssertion(fixture.registered, RP_ID)).verified).toBe(true);
+    fixture.set({ flags: 0x11, count: 100 });
+    const rejected = await getLiveAssertion(fixture.registered, RP_ID);
+    expect(pass(rejected.checks, 'Signature valid')).toBe(true);
+    expect(pass(rejected.checks, 'Backup flags valid (BE/BS)')).toBe(false);
+    expect(rejected.verified).toBe(false);
+    expect(fixture.registered.lastSignCount).toBe(2);
+    expect(fixture.registered.lastBackupFlags).toEqual({ be: true, bs: false });
+    fixture.set({ flags: 0x19, count: 3 });
+    expect((await getLiveAssertion(fixture.registered, RP_ID)).verified).toBe(true);
+    expect(fixture.registered.lastBackupFlags).toEqual({ be: true, bs: true });
+  });
+});
+
+function cbor(value: number | string | Uint8Array | Map<number | string, unknown>): Uint8Array {
+  const header = (major: number, n: number) => n < 24 ? [major << 5 | n] : n < 256 ? [major << 5 | 24, n] : [major << 5 | 25, n >> 8, n & 255];
+  if (typeof value === 'number') return new Uint8Array(header(value >= 0 ? 0 : 1, value >= 0 ? value : -1 - value));
+  if (typeof value === 'string') { const bytes = new TextEncoder().encode(value); return new Uint8Array([...header(3, bytes.length), ...bytes]); }
+  if (value instanceof Uint8Array) return new Uint8Array([...header(2, value.length), ...value]);
+  return new Uint8Array([...header(5, value.size), ...[...value].flatMap(([k, v]) => [...cbor(k), ...cbor(v as Parameters<typeof cbor>[0])])]);
+}
+
+describe('Level 3 backup flags on registration wire responses', () => {
+  it.each([0x41, 0x49, 0x59, 0x51])('checks backup consistency for flag byte %i', async flags => {
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const jwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+    const unb64 = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const cose = cbor(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, unb64(jwk.x!)], [-3, unb64(jwk.y!)]]));
+    const id = new Uint8Array([9, 8, 7, 6]);
+    const authData = buildAuthData({ rpIdHash: await sha256(new TextEncoder().encode(RP_ID)), flags, signCount: 0,
+      attested: { aaguid: new Uint8Array(16), credId: id, coseKey: cose } });
+    vi.stubGlobal('window', { location: { origin: ORIGIN }, PublicKeyCredential: class {} });
+    vi.stubGlobal('navigator', { credentials: { create: async (options: CredentialCreationOptions) => ({ rawId: id.buffer, response: {
+      attestationObject: cbor(new Map<string, unknown>([['fmt', 'none'], ['authData', authData]])).buffer,
+      clientDataJSON: new TextEncoder().encode(JSON.stringify({ type: 'webauthn.create', origin: ORIGIN,
+        challenge: b64urlEncode(new Uint8Array(options.publicKey!.challenge as ArrayBuffer)) })).buffer,
+    } }) } });
+    const candidate = await createLivePasskey(RP_ID, 'example');
+    expect(pass(candidate.checks, 'Backup flags valid (BE/BS)')).toBe(flags !== 0x51);
+    expect(candidate.checks.filter(c => c.label !== 'Backup flags valid (BE/BS)').every(c => c.pass)).toBe(true);
+    if (flags === 0x51) await expect(getLiveAssertion(candidate, RP_ID)).rejects.toThrow('Registration checks did not pass');
   });
 });

@@ -40,12 +40,22 @@ export interface LiveRegistration {
   checks: LiveCheck[];
   /** Highest signature counter seen so far; updated after each accepted assertion. */
   lastSignCount: number;
+  /** Most recent accepted backup flags; original registration flags stay separate. */
+  lastBackupFlags?: { be: boolean; bs: boolean };
 }
 
 export interface LiveCheck {
   label: string;
   pass: boolean;
   detail: string;
+}
+
+/** WebAuthn Level 3 (25 August 2026), §7.1.17 / §7.2.18. */
+function backupFlagsCheck(flags: AuthFlags): LiveCheck {
+  const valid = flags.be || !flags.bs;
+  return { label: 'Backup flags valid (BE/BS)', pass: valid,
+    detail: valid ? `BE=${Number(flags.be)}, BS=${Number(flags.bs)} is an allowed combination. These flags alone do not establish an assurance level.`
+      : 'BS=1 with BE=0 is forbidden: a credential that is not backup eligible cannot be backed up (WebAuthn Level 3).', };
 }
 
 export interface LiveAssertion {
@@ -371,6 +381,7 @@ export async function createLivePasskey(rpId: string, rpName: string): Promise<L
     b64urlEncode(challenge),
     window.location.origin,
   );
+  checks.push(backupFlagsCheck(parsed.flags));
   const rpHashOk = bytesEqual(parsed.rpIdHash, rpIdHash);
   checks.push({
     label: 'RP ID hash',
@@ -410,6 +421,7 @@ export async function createLivePasskey(rpId: string, rpName: string): Promise<L
     rpIdHash,
     checks,
     lastSignCount: parsed.signCount,
+    lastBackupFlags: { be: parsed.flags.be, bs: parsed.flags.bs },
   };
 }
 
@@ -418,6 +430,7 @@ export async function getLiveAssertion(
   rpId: string,
 ): Promise<LiveAssertion> {
   if (!isWebAuthnSupported()) throw new Error('WebAuthn is not available in this browser.');
+  if (registered.checks.some((check) => !check.pass)) throw new Error('Registration checks did not pass.');
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const cred = (await navigator.credentials.get({
     publicKey: {
@@ -469,6 +482,7 @@ export async function getLiveAssertion(
     window.location.origin,
   );
 
+  checks.push(backupFlagsCheck(parsed.flags));
   const rpHashOk = bytesEqual(parsed.rpIdHash, registered.rpIdHash);
   checks.push({
     label: 'RP ID hash',
@@ -521,6 +535,7 @@ export async function getLiveAssertion(
   const verified = checks.every((c) => c.pass);
   // Persist only after complete acceptance: rejected assertions must not poison
   // the counter used to evaluate later valid assertions (§7.2 state updates).
+  if (verified) registered.lastBackupFlags = { be: parsed.flags.be, bs: parsed.flags.bs };
   if (verified && !counterUnsupported && counterOk) registered.lastSignCount = parsed.signCount;
 
   let rawSigPreview = '';
@@ -618,9 +633,10 @@ export async function mountLiveDemo(host: HTMLElement, rpId: string, rpName: str
       registerBtn.disabled = true;
       out.setAttribute('aria-busy', 'true');
       try {
-        registered = await createLivePasskey(rpId, rpName);
-        renderLiveRegistration(out, registered);
-        authenticateBtn.disabled = false;
+        const candidate = await createLivePasskey(rpId, rpName);
+        renderLiveRegistration(out, candidate);
+        if (candidate.checks.every((check) => check.pass)) registered = candidate;
+        authenticateBtn.disabled = registered === null;
       } catch (err) {
         renderLiveError(out, err);
       } finally {
@@ -738,7 +754,7 @@ function renderLiveRegistration(out: HTMLElement, r: LiveRegistration): void {
     Object.assign(document.createElement('p'), {
       className: 'signed-bytes-note',
       textContent:
-        'These values come from the real browser response. AT must be 1 on registration (the public key is included). BE/BS indicate whether the passkey is syncable across devices. This demo requests attestation: \'none\', so it does not — and cannot — validate an attestation statement or the authenticator model.',
+        'These values come from the real browser response. AT must be 1 on registration (the public key is included). BE/BS describe backup eligibility and current backup state; BE=0/BS=1 is rejected. These flags alone do not establish an assurance level. This demo requests attestation: \'none\', so it does not — and cannot — validate an attestation statement or the authenticator model.',
     }),
   );
   // Add an eyebrow title.

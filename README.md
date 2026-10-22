@@ -49,7 +49,7 @@ npm run dev
 
 The security-critical engine has a fast, isolated unit suite (`test/engine.test.ts`, run with `npm test` via Vitest) that asserts the pure ceremony logic directly — no browser required:
 
-- **Known-answer tests**: the SHA-256 RP-ID digest and a frozen ECDSA P-256 verification vector, so a change in the underlying primitives is caught immediately.
+- **Known-answer tests**: a NIST CAVP FIPS 180-4 SHA-256 byte vector routed through the ceremony's production hash helper, the SHA-256 RP-ID digest, and a frozen ECDSA P-256 verification vector, so a change in the underlying primitives is caught immediately.
 - **Happy path**: register → authenticate → verify passes all five checks, the stored credential carries only a public JWK (no private scalar `d`), and the counter increases per assertion.
 - **The four attacks**: phishing trips Origin, replay trips Challenge, a wrong-RP request is refused by the authenticator, and a clone trips Counter — each on exactly the right check.
 - **Signed-data binding**: the simulator parses the readable `rpIdHash|flags|signCount` encoding once, requires a canonical hash/flags byte/uint32 count, and drives RP, counter, UP/UV policy and accepted state from those signed fields. Inconsistent unsigned display duplicates are explicitly rejected; they never override the authenticated values. A genuinely signed stale count fails the counter policy while retaining a valid signature. Changing signed bytes breaks the signature, while changing only duplicate metadata fails consistency. Malformed but genuinely signed encodings remain invalid assertions.

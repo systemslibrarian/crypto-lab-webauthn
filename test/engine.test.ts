@@ -11,6 +11,7 @@ import {
   randomChallenge,
   AUTH_FLAG_UP,
   AUTH_FLAG_UV,
+  sha256Hex,
   shortB64,
   type Assertion,
   type VerifyResult,
@@ -66,12 +67,16 @@ function bytesToB64(u: Uint8Array): string {
 // Known-answer tests: lock the primitives the whole design rests on.
 // =========================================================================
 describe('known-answer tests (real crypto primitives)', () => {
-  // SHA-256 of the RP id is what binds authData to the relying party. This is
-  // an independent KAT vector (echo -n example.com | sha256sum).
+  // SHA-256 of the RP id is what binds authData to the relying party. Keep this
+  // repository-specific value as a control beside the published vector below.
   it('SHA-256("example.com") matches the reference digest', async () => {
-    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('example.com'));
-    const hex = Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    expect(hex).toBe('a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947');
+    expect(await sha256Hex('example.com')).toBe('a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947');
+  });
+
+  it('production SHA-256 helper matches a NIST CAVP byte vector', async () => {
+    // FIPS 180-4 CAVP SHA256ShortMsg.rsp: Len = 8, Msg = d3.
+    // https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/shs/shabytetestvectors.zip
+    expect(await sha256Hex(Uint8Array.of(0xd3))).toBe('28969cdfa74a12c82f3bad960b0b000aca2ac329deea5c2328ebc6f2ba9802c1');
   });
 
   // Frozen P-256 verification vector: a fixed public key must verify a fixed

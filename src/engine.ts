@@ -43,8 +43,9 @@ export function randomChallenge(): string {
     crypto.getRandomValues(a);
     return b64(a.buffer);
 }
-async function sha256Hex(s: string): Promise<string> {
-    const d = await crypto.subtle.digest('SHA-256', enc.encode(s) as BufferSource);
+export async function sha256Hex(input: string | Uint8Array): Promise<string> {
+    const bytes = typeof input === 'string' ? enc.encode(input) : new Uint8Array(input);
+    const d = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
     return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 

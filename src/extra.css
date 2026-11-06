@@ -540,3 +540,5 @@
   background: var(--bg-soft);
   color: var(--ink-soft);
 }
+
+#recovery-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-block: 1rem; }

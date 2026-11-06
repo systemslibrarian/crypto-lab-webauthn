@@ -1,3 +1,4 @@
+import { renderRecovery } from './recovery';
 // ui.ts — renders the WebAuthn passkey demo. All crypto is delegated to engine.ts.
 import {
   Authenticator,
@@ -112,6 +113,7 @@ export function mountApp(root: HTMLDivElement): void {
     renderDiscoverableUV(state),
     renderPhishingExplainer(),
     renderCeremonyTable(),
+    renderRecovery(),
     renderRealWorld(),
     renderProductionGaps(),
     renderLiveDemo(),

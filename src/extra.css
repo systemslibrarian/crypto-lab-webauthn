@@ -540,3 +540,6 @@
   background: var(--bg-soft);
   color: var(--ink-soft);
 }
+
+#recovery-actions { display: flex; flex-wrap: wrap; gap: .65rem; margin-block: 1rem; }
+#account-recovery a { color: var(--accent); text-decoration: underline; text-underline-offset: .15em; }

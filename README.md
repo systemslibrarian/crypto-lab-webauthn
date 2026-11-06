@@ -79,3 +79,7 @@ The build (`npm run build`), a WCAG A/AA accessibility gate (`npm run test:a11y`
 ## WebAuthn Level 3 backup-state consistency
 
 The real-response path checks the allowed BE/BS combinations during registration and assertion verification, following the [25 August 2026 W3C Recommendation](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/) (§7.1 step 17, §7.2 step 18). BE=0/BS=1 is rejected even when the assertion’s ECDSA signature verifies. Rejected responses do not replace an accepted credential or advance its counter/backup state. BE=1 permits legitimate BS transitions; this demo does not apply a backup-based business policy or infer an assurance level from these flags. It remains a teaching verifier without attestation validation.
+
+### Synthetic account recovery
+
+The account-recovery exercise separates passkey revocation, session logout, recovery-route removal and password reset. Each action changes fictional state only; a trusted passkey remains available. Retained inventory evidence and attempted intruder re-entry make incomplete remediation visible. This is an explicitly invented policy, not provider guidance. Inspired by [Daffalla et al., USENIX Security 2026](https://www.usenix.org/conference/usenixsecurity26/presentation/daffalla), a 31-participant qualitative study; no universal rates are inferred. Unit and browser tests cover remaining access and complete remediation.

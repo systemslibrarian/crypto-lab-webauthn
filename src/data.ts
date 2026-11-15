@@ -175,7 +175,7 @@ export const PRODUCTION_GAPS: ProductionGap[] = [
     what:
       'Each authenticator family ships with a 128-bit Authenticator Attestation GUID — for example, distinguishing a YubiKey 5 NFC from Windows Hello. RPs that enforce hardware policies (e.g., FIDO-certified only) gate on AAGUID.',
     why:
-      'The AAGUID is not in the attestation statement — it sits in the attested credential data inside authData (W3C WebAuthn §6.5.1), which is why the live section at the bottom of this page can read it after decoding the CBOR attestationObject, while the JSON simulator above cannot. Note also that this page requests attestation: \'none\', under which the client zeroes the AAGUID; identifying the model needs an attestation conveyance the demo does not request.',
+      'The AAGUID is not in the attestation statement — it sits in the attested credential data inside authData (W3C WebAuthn §6.5.1), which is why the live section at the bottom of this page can read it after decoding the CBOR attestationObject, while the JSON simulator above cannot. Note also that this page requests attestation: \'none\'. Under WebAuthn Level 3 (§5.1.3) that makes the client set the format to "none" and the attestation statement to an empty CBOR map, and nothing more: the live panel prints whatever AAGUID authData carried and calls it zero only when it is. Replacing the AAGUID with 16 zero bytes was the Level 2 rule for \'none\'; Level 3 dropped that step. Either way the value is unattested, and identifying a model you can trust needs an attestation conveyance the demo does not request.',
     doRealLibraries:
       'The FIDO Metadata Service (MDS3) maps AAGUIDs → vendor / model / certification level.',
   },

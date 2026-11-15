@@ -735,7 +735,7 @@ function renderLiveRegistration(out: HTMLElement, r: LiveRegistration): void {
     dl.append(dt, dd);
   };
   addPair('credentialId (base64url)', r.credentialId);
-  addPair('AAGUID', r.aaguidIsZero ? `${r.aaguid}  (zero — attestation:'none' withholds the model)` : r.aaguid);
+  addPair('AAGUID', r.aaguidIsZero ? `${r.aaguid}  (zero — no authenticator model reported)` : r.aaguid);
   addPair('transports', r.transports.length ? r.transports.join(', ') : '(none reported)');
   addPair('public key (JWK)', `${r.publicKeyJwk.kty} / ${r.publicKeyJwk.crv}, x=${(r.publicKeyJwk.x ?? '').slice(0, 22)}…`);
   addPair('signCount', String(r.signCount));

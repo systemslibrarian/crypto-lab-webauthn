@@ -21,6 +21,7 @@ import {
   _b64urlEncode as b64urlEncode,
   _bytesEqual as bytesEqual,
 } from '../src/live';
+import { PRODUCTION_GAPS } from '../src/data';
 
 const ORIGIN = 'https://example.com';
 const RP_ID = 'example.com';
@@ -380,5 +381,27 @@ describe('Level 3 backup flags on registration wire responses', () => {
     expect(pass(candidate.checks, 'Backup flags valid (BE/BS)')).toBe(flags !== 0x51);
     expect(candidate.checks.filter(c => c.label !== 'Backup flags valid (BE/BS)').every(c => c.pass)).toBe(true);
     if (flags === 0x51) await expect(getLiveAssertion(candidate, RP_ID)).rejects.toThrow('Registration checks did not pass');
+  });
+});
+
+// The page requests `attestation: 'none'`, and what that does to the AAGUID
+// changed between levels: WebAuthn Level 2 §5.1.3 told the client to "Replace
+// the AAGUID in the attested credential data with 16 zero bytes", while the
+// Level 3 Recommendation only sets fmt to "none" and attStmt to "an empty CBOR
+// map". parseAuthData above reads the AAGUID exactly as it arrives, so the
+// explanatory copy must not promise a zero either.
+describe("the AAGUID card describes attestation: 'none' as Level 3 defines it", () => {
+  const card = PRODUCTION_GAPS.find(c => c.title.startsWith('AAGUID'));
+
+  it('names the emptied attestation statement rather than a zeroed AAGUID', () => {
+    expect(card).toBeDefined();
+    expect(card!.why).toContain('Level 3');
+    expect(card!.why).toContain('empty CBOR map');
+    expect(card!.why).toContain('calls it zero only when it is');
+    expect(card!.why).not.toMatch(/client zeroes the AAGUID/);
+  });
+
+  it('keeps AAGUID zeroing where it belongs, as the Level 2 rule', () => {
+    expect(card!.why).toMatch(/16 zero bytes was the Level 2 rule/);
   });
 });

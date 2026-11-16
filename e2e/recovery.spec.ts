@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { auditControlNames, formatControlNameFailures } from './control-names';
 for (const width of [1280, 380]) test(`synthetic recovery closes separate routes at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 }); await page.goto('.');
   const panel = page.locator('#account-recovery'), result = panel.locator('#recovery-result');
@@ -12,6 +13,9 @@ for (const width of [1280, 380]) test(`synthetic recovery closes separate routes
   await expect(result).toContainText('Intruder cannot re-enter');
   await expect(result).toContainText('Recorded routes (preserved): unrecognized passkey, existing session, recovery email, known password');
   expect((await new AxeBuilder({ page }).include('#account-recovery').analyze()).violations).toEqual([]);
+  // axe's `label` rule accepts a bare `placeholder` as an accessible name, so a
+  // deleted label can leave this gate green. See `control-names.ts`.
+  expect(formatControlNameFailures(await auditControlNames(page)), `form controls named only by placeholder/title at ${width}px`).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
   await panel.getByRole('button', { name: 'Reset fictional account' }).click();
   await expect(result).toContainText('Inventory has not been recorded');

@@ -319,7 +319,19 @@ describe('live assertion acceptance and counter state', () => {
     const r = await getLiveAssertion(registered, RP_ID);
     expect(r.verified).toBe(true);
     expect(registered.lastSignCount).toBe(0);
-    expect(r.checks.find(c => c.label === 'Counter increasing')?.detail).toContain('cannot run');
+    const counter = r.checks.find(c => c.label === 'Counter increasing');
+    expect(counter?.pass).toBeNull();
+    expect(counter?.detail).toContain('cannot run');
+    expect(r.checks.filter(c => c.pass === true)).toHaveLength(r.checks.length - 1);
+  });
+
+  it('an unavailable counter cannot mask a failed required check', async () => {
+    const { registered } = await liveFixture(0, { count: 0, fault: 'signature' });
+    const result = await getLiveAssertion(registered, RP_ID);
+    expect(result.verified).toBe(false);
+    expect(result.checks.find(c => c.label === 'Signature valid')?.pass).toBe(false);
+    expect(result.checks.find(c => c.label === 'Counter increasing')?.pass).toBeNull();
+    expect(registered.lastSignCount).toBe(0);
   });
 
   it.each(['truncated', 'cancelled', 'null'] as const)('unreadable/unfinished %s response leaves state unchanged', async fault => {

@@ -46,7 +46,8 @@ export interface LiveRegistration {
 
 export interface LiveCheck {
   label: string;
-  pass: boolean;
+  /** Null when the response provides no evidence for this comparison. */
+  pass: boolean | null;
   detail: string;
 }
 
@@ -66,7 +67,7 @@ export interface LiveAssertion {
   clientDataJSON: string;
   flags: AuthFlags;
   signCount: number;
-  /** True only when EVERY check in `checks` passed — not the signature alone. */
+  /** True when all required checks and any available counter comparison pass. */
   verified: boolean;
   checks: LiveCheck[];
   signedBytesPreview: string;
@@ -517,26 +518,25 @@ export async function getLiveAssertion(
       : 'UP flag NOT set; WebAuthn requires it for an assertion.',
   });
 
-  // Counter check. The spec permits an authenticator to always report 0 (§6.1.1),
-  // and most synced passkey providers do exactly that. Reporting that as a
-  // failure would be a lie about the authenticator; reporting it as a pass would
-  // be a lie about the check. So it is reported as what it is: not exercised.
-  const counterUnsupported = parsed.signCount === 0 && registered.lastSignCount === 0;
-  const counterOk = counterUnsupported || parsed.signCount > registered.lastSignCount;
+  // WebAuthn §7.2 compares counts only if at least one is nonzero.
+  const requiredChecksPassed = checks.every(c => c.pass === true);
+  const counterPass = parsed.signCount === 0 && registered.lastSignCount === 0
+    ? null
+    : parsed.signCount > registered.lastSignCount;
   checks.push({
     label: 'Counter increasing',
-    pass: counterOk,
-    detail: counterUnsupported
-      ? 'This authenticator reports signCount = 0 always, which the spec allows. Clone detection is therefore not available for this credential — it is not a check that passed, it is a check that cannot run.'
-      : counterOk
+    pass: counterPass,
+    detail: counterPass === null
+      ? 'The stored and returned counts are both zero. A counter-based clone check cannot run for this assertion.'
+      : counterPass
         ? `Counter ${parsed.signCount} > ${registered.lastSignCount}.`
         : `Counter ${parsed.signCount} <= ${registered.lastSignCount} — possible cloned authenticator.`,
   });
-  const verified = checks.every((c) => c.pass);
+  const verified = requiredChecksPassed && counterPass !== false;
   // Persist only after complete acceptance: rejected assertions must not poison
   // the counter used to evaluate later valid assertions (§7.2 state updates).
   if (verified) registered.lastBackupFlags = { be: parsed.flags.be, bs: parsed.flags.bs };
-  if (verified && !counterUnsupported && counterOk) registered.lastSignCount = parsed.signCount;
+  if (verified && counterPass === true) registered.lastSignCount = parsed.signCount;
 
   let rawSigPreview = '';
   try {
@@ -690,10 +690,10 @@ function renderCheckList(checks: LiveCheck[], caption: string): HTMLElement {
   ul.className = 'live-check-list';
   for (const c of checks) {
     const li = document.createElement('li');
-    li.className = 'live-check ' + (c.pass ? 'live-check--pass' : 'live-check--fail');
+    li.className = 'live-check live-check--' + (c.pass === null ? 'unavailable' : c.pass ? 'pass' : 'fail');
     const badge = document.createElement('span');
     badge.className = 'live-flag ' + (c.pass ? 'live-flag--on' : 'live-flag--off');
-    badge.textContent = c.pass ? 'PASS' : 'FAIL';
+    badge.textContent = c.pass === null ? 'UNAVAILABLE' : c.pass ? 'PASS' : 'FAIL';
     const label = document.createElement('strong');
     label.textContent = ` ${c.label}: `;
     const detail = document.createElement('span');
@@ -773,12 +773,13 @@ function renderLiveAssertion(out: HTMLElement, r: LiveRegistration, a: LiveAsser
   const badge = document.createElement('span');
   badge.className =
     'scenario-status ' + (a.verified ? 'scenario-status--valid' : 'scenario-status--invalid');
-  const firstBad = a.checks.find((c) => !c.pass);
+  const firstBad = a.checks.find(c => c.pass === false);
+  const passed = a.checks.filter(c => c.pass === true).length;
   badge.textContent = a.verified ? 'Verified' : 'Rejected';
   const summary = document.createElement('span');
   summary.className = 'verify-summary';
   summary.textContent = a.verified
-    ? `All ${a.checks.length} relying-party checks passed, including the ECDSA P-256 signature verified locally against the public key from registration (${r.publicKeyJwk.crv}).`
+    ? `${passed} relying-party checks passed, including the ${r.publicKeyJwk.crv} signature check.${passed < a.checks.length ? ' The signature counter comparison was unavailable.' : ''}`
     : `Rejected: ${firstBad?.detail ?? 'a check failed.'}`;
   status.append(badge, summary);
   out.append(status);
@@ -804,7 +805,7 @@ function renderLiveAssertion(out: HTMLElement, r: LiveRegistration, a: LiveAsser
   eyebrowPara.className = 'signed-bytes-title';
   const eyebrow = document.createElement('span');
   eyebrow.className = 'signed-bytes-eyebrow';
-  eyebrow.textContent = 'Real assertion (verified locally)';
+  eyebrow.textContent = a.verified ? 'Real assertion (verified locally)' : 'Real assertion (rejected locally)';
   eyebrowPara.append(eyebrow);
   const note = document.createElement('p');
   note.className = 'signed-bytes-note';

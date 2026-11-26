@@ -4,6 +4,8 @@
 
 A faithful model of the WebAuthn / FIDO2 passkey ceremony using **real ECDSA P-256 signatures** via the browser's Web Crypto API. A simulated authenticator generates a credential keypair bound to a relying party (RP), keeps the private key inside itself, and produces signed assertions on demand. A simulated server registers the public credential and verifies each assertion against five contextual checks: a fresh challenge, the origin the browser actually saw, the RP ID hash, the ECDSA signature itself, and a monotonic counter for clone detection. The same engine then drives four attacks — a phishing site, a replayed assertion, a wrong-relying-party request, and a cloned authenticator — so you can watch the specific check each attack trips on. This is **not** the full CBOR/COSE/attestation wire format; it models the *security-relevant logic* of WebAuthn — the parts you'd review in a relying-party verifier — without the byte-level encoding work that production libraries already do.
 
+A WebAuthn assertion signs `authenticatorData || SHA-256(clientDataJSON)`. The browser supplies the credential ID, client data, authenticator data and signature to the relying party. The simulator uses a readable encoding. The real-passkey exercise parses the browser’s binary response. [W3C Web Authentication Level 3, §7.2](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-verifying-assertion)
+
 ## When to Use It
 
 - **Teaching how passkeys actually log you in** — show the registration vs. authentication ceremonies without hand-waving over the math, because the page is doing real ECDSA P-256.
@@ -25,7 +27,7 @@ Below the simulator, **Try it with a real passkey** calls the actual `navigator.
 
 - Skipping the origin or RP ID check defeats phishing resistance — a look-alike origin must be rejected, which is the whole point of WebAuthn.
 - Failing to validate a fresh, server-issued challenge allows a captured assertion to be replayed.
-- Ignoring the signature counter misses cloned-authenticator detection.
+- When either the stored or returned signature counter is nonzero, a value that fails to advance is a potential cloning signal. Two zero counts supply no counter evidence. The relying party decides how to handle a warning.
 - Trusting client-supplied values (origin, challenge) instead of comparing them against server-side expectations breaks the entire model.
 - Hand-rolling CBOR/COSE and attestation parsing is error-prone; production verifiers should use vetted libraries (this demo deliberately models only the security logic, not the wire format).
 
@@ -53,7 +55,7 @@ The security-critical engine has a fast, isolated unit suite (`test/engine.test.
 - **Happy path**: register → authenticate → verify passes all five checks, the stored credential carries only a public JWK (no private scalar `d`), and the counter increases per assertion.
 - **The four attacks**: phishing trips Origin, replay trips Challenge, a wrong-RP request is refused by the authenticator, and a clone trips Counter — each on exactly the right check.
 - **Signed-data binding**: the simulator parses the readable `rpIdHash|flags|signCount` encoding once, requires a canonical hash/flags byte/uint32 count, and drives RP, counter, UP/UV policy and accepted state from those signed fields. Inconsistent unsigned display duplicates are explicitly rejected; they never override the authenticated values. A genuinely signed stale count fails the counter policy while retaining a valid signature. Changing signed bytes breaks the signature, while changing only duplicate metadata fails consistency. Malformed but genuinely signed encodings remain invalid assertions.
-- **Forgery rejection**: a flipped signature bit, a forged origin, and a substituted public key all fail signature verification; strict counter monotonicity rejects equal counts.
+- **Forgery rejection**: a flipped signature bit, a forged origin, and a substituted public key all fail signature verification; the simulator rejects repeated nonzero counts under its local policy. The live verifier accepts two zero counts as unavailable counter evidence.
 - **UP/UV policy** and **discoverable-credential** lookup gates.
 
 A second suite (`test/live.test.ts`) covers the real-WebAuthn path in `src/live.ts` without needing an authenticator attached, by constructing the wire bytes directly: `authData` is built to the §6.1 layout and parsed back, asserting the rpIdHash, the big-endian `signCount`, each flag bit position (UP=0, UV=2, BE=3, BS=4, AT=6, ED=7), and that the AAGUID is read out of *attested credential data* rather than an attestation statement; the DER→raw conversion is asserted to left-pad short integers and strip DER's high-bit sign byte; COSE→JWK is asserted to refuse a non-EC2 key rather than emit a bogus one; and each relying-party check is falsified one at a time — a stale challenge, a look-alike origin, and a `webauthn.create` response replayed as a login each trip *exactly* the corresponding row and leave the others passing.

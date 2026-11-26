@@ -45,3 +45,12 @@ for (const width of [1280, 380]) {
     expect(overflowing).toBe(false);
   });
 }
+
+
+test('the ceremony diagram shows the two signed inputs and what crosses to the RP', async ({ page }) => {
+  await page.goto('.');
+  const diagram = page.locator('#ceremony-diagram');
+  await expect(diagram.locator('.ceremony-action')).toHaveText('sign(authenticatorData ‖ SHA-256(clientDataJSON))');
+  await expect(diagram.locator('.arrow-label')).toHaveText('credential ID, authenticator data, client data and signature');
+  await expect(diagram.locator('.ceremony-caption .highlight-origin')).toHaveText('origin');
+});

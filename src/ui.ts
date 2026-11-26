@@ -270,18 +270,16 @@ function renderCeremonyDiagram(): HTMLElement {
     el('p', { class: 'ceremony-secret', text: 'private key — held by the authenticator' }),
     el('p', { class: 'ceremony-action mono' }, [
       document.createTextNode('sign('),
-      el('span', { class: 'signed-field', text: 'challenge' }),
-      document.createTextNode(' ‖ '),
-      el('span', { class: 'signed-field highlight-origin', text: 'origin' }),
-      document.createTextNode(' ‖ '),
-      el('span', { class: 'signed-field', text: 'rpIdHash' }),
-      document.createTextNode(' ‖ '),
-      el('span', { class: 'signed-field', text: 'flags' }),
-      document.createTextNode(' ‖ '),
-      el('span', { class: 'signed-field', text: 'signCount' }),
-      document.createTextNode(')'),
+      el('span', { class: 'signed-field', text: 'authenticatorData' }),
+      document.createTextNode(' ‖ SHA-256('),
+      el('span', { class: 'signed-field', text: 'clientDataJSON' }),
+      document.createTextNode('))'),
     ]),
-    el('p', { class: 'ceremony-caption', text: 'The origin is part of the signed bytes — that is why a phishing site cannot forge a useful signature.' }),
+    el('p', { class: 'ceremony-caption' }, [
+      document.createTextNode('Authenticator data carries the RP ID hash, flags and counter. The client data carries the ceremony type, challenge and '),
+      el('span', { class: 'signed-field highlight-origin', text: 'origin' }),
+      document.createTextNode('. The verifier checks the signature and compares these fields with its expectations.'),
+    ]),
   );
 
   // Arrow with label. Only the ➜ glyph is decorative. The label names the one
@@ -292,7 +290,7 @@ function renderCeremonyDiagram(): HTMLElement {
   // went unmeasured too.
   const arrow = el('div', { class: 'ceremony-arrow' });
   arrow.append(
-    el('span', { class: 'arrow-label', text: 'assertion (signature + signed bytes)' }),
+    el('span', { class: 'arrow-label', text: 'credential ID, authenticator data, client data and signature' }),
     el('span', { class: 'arrow-shape', 'aria-hidden': 'true', text: '➜' }),
   );
 
@@ -309,7 +307,7 @@ function renderCeremonyDiagram(): HTMLElement {
       el('li', { text: 'challenge fresh? (anti-replay)' }),
       el('li', { text: 'origin matches expected? (anti-phishing)' }),
       el('li', { text: 'rpIdHash matches expected?' }),
-      el('li', { text: 'signCount strictly increasing? (clone detection)' }),
+      el('li', { text: 'counter supported? Compare nonzero counts for a possible cloning signal.' }),
     ]),
   );
 
@@ -429,7 +427,7 @@ function renderLogin(state: DemoState): HTMLElement {
     ]),
     el('p', {
       text:
-        'The server issues a fresh challenge. The authenticator signs (challenge ‖ origin ‖ rpIdHash ‖ flags ‖ counter) with the private key. The server verifies the signature with the stored public key and checks every contextual field.',
+        'The server issues a fresh challenge. The authenticator signs authenticatorData followed by the SHA-256 hash of clientDataJSON. The server receives the assertion, checks its fields and verifies the signature using the stored public key.',
     }),
   );
 

@@ -37,7 +37,7 @@ export const CEREMONY_STEPS: CeremonyStep[] = [
     phase: 'Authentication',
     ordinal: 2,
     actor: 'Authenticator',
-    action: 'Signs (challenge ‖ origin ‖ rpIdHash ‖ flags ‖ signCount) with the private key. The server receives only the signature.',
+    action: 'Signs authenticatorData followed by SHA-256(clientDataJSON). The client sends the credential ID, authenticator data, original client data and signature to the server.',
   },
   {
     phase: 'Authentication',
@@ -55,7 +55,7 @@ export interface PhishingCard {
 export const WHY_PHISHING_FAILS: PhishingCard[] = [
   {
     title: 'The origin is signed',
-    body: 'The authenticator includes the origin the browser actually saw inside the bytes it signs. A look-alike domain produces a signature that does not match what the server expects, and the login is rejected.',
+    body: 'The browser records the origin in clientDataJSON. Its hash is covered by the authenticator signature. The server checks the reported origin against its allowed origins.',
   },
   {
     title: 'Credentials are bound to one RP',
@@ -125,7 +125,7 @@ export const REAL_WORLD: RealWorldNote[] = [
   },
   {
     title: 'What this demo simplifies',
-    body: 'Real WebAuthn wraps the same security logic in CBOR-encoded authenticator data, COSE-encoded keys, and an attestation statement. This page models the security checks — the challenge, origin, RP ID, signature, and counter — without the wire format.',
+    body: 'The simulator uses readable text to represent the signed fields. The real-passkey exercise reads binary authenticator data and the CBOR registration object from the browser. It verifies assertions locally and shows their fields.',
   },
 ];
 
@@ -164,9 +164,9 @@ export const PRODUCTION_GAPS: ProductionGap[] = [
   {
     title: 'CBOR / COSE encoding and hardware attestation',
     what:
-      'Real authData is a packed byte structure; the public key inside it is COSE-encoded, not JWK. Registration optionally includes an attestation statement (formats: packed, fido-u2f, tpm, android-key, apple, none) that proves the model of the authenticator.',
+      'Authenticator data is a packed byte structure. Registration carries a COSE public key inside it. The CBOR attestation object also identifies the attestation format. The none format supplies no provenance evidence.',
     why:
-      'This page deliberately uses JSON for the security-relevant fields so a learner can read them. Switching to CBOR/COSE/attestation would obscure the lesson without changing the security property — that is the original prompt\'s explicit scope boundary.',
+      'The simulator makes the fields readable. The real-passkey exercise parses the binary structures, imports the public key and verifies assertions. It leaves attestation trust and provenance policy to the relying party.',
     doRealLibraries:
       'cbor-x for CBOR; fido-mds3 / fido-conformance-tools for attestation root trust.',
   },
